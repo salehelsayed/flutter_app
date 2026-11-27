@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -114,6 +116,11 @@ void main() {
     String? userPeerId,
     Map<String, OrbitThoughtNote> thoughtsByPeerId = const {},
     DateTime Function()? thoughtNowProvider,
+    ValueChanged<OrbitFriend>? onFriendTap,
+    ValueChanged<OrbitFriend>? onFriendAvatarTap,
+    ValueChanged<OrbitFriend>? onArchiveFriend,
+    ValueChanged<OrbitGroup>? onGroupTap,
+    ValueChanged<OrbitGroup>? onArchiveGroup,
   }) {
     final mergedItems = <OrbitItem>[
       ...friends.map(OrbitFriendItem.new),
@@ -166,21 +173,22 @@ void main() {
         searchDockAnimation: searchDockAnimation,
         searchTriggerAnimation: searchTriggerAnimation,
         onClose: () {},
-        onFriendTap: (_) {},
+        onFriendTap: onFriendTap ?? (_) {},
+        onFriendAvatarTap: onFriendAvatarTap,
         onSearchOpen: () {},
         onSearchClose: () {},
         onSearchChanged: (_) {},
         onSearchClear: () {},
         onFilterChanged: (_) {},
-        onArchiveFriend: (_) {},
+        onArchiveFriend: onArchiveFriend ?? (_) {},
         onUnarchiveFriend: (_) {},
         onBlockFriend: (_) {},
         onUnblockFriend: (_) {},
         onDeleteFriend: (_) {},
         openRowNotifier: openRowNotifier,
-        onGroupTap: (_) {},
+        onGroupTap: onGroupTap ?? (_) {},
         onCreateGroup: (_) {},
-        onArchiveGroup: (_) {},
+        onArchiveGroup: onArchiveGroup ?? (_) {},
         onUnarchiveGroup: (_) {},
         onLeaveGroup: (_) {},
         onDeleteGroup: (_) {},
@@ -362,6 +370,86 @@ void main() {
       } finally {
         await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
       }
+    });
+  });
+
+  group('production Orbit row actions', () {
+    testWidgets('the named contact owns Open and Archive actions', (
+      tester,
+    ) async {
+      final friend = makeFriend(id: 'named-contact', username: 'Riley');
+      final opened = <String>[];
+      final profiles = <String>[];
+      final archived = <String>[];
+      await tester.pumpWidget(
+        buildOrbitScreen(
+          friends: [friend],
+          onFriendTap: (row) => opened.add(row.peerId),
+          onFriendAvatarTap: (row) => profiles.add(row.peerId),
+          onArchiveFriend: (row) => archived.add(row.peerId),
+        ),
+      );
+      await tester.pump(Duration.zero);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text(friend.username), findsOneWidget);
+
+      final identifier = 'orbit.contact.${friend.peerId}';
+      final node = tester.getSemantics(find.bySemanticsIdentifier(identifier));
+      final data = node.getSemanticsData();
+      expect(data.identifier, identifier);
+      expect(data.label, contains(friend.username));
+      expect(data.hasAction(SemanticsAction.tap), isTrue);
+      node.owner!.performAction(node.id, SemanticsAction.tap);
+      expect(opened, [friend.peerId]);
+
+      await tester.tap(
+        find.byWidgetPredicate(
+          (widget) => widget is UserAvatar && widget.peerId == friend.peerId,
+        ),
+      );
+      expect(profiles, [friend.peerId]);
+      expect(opened, [friend.peerId]);
+
+      final archive = CustomSemanticsAction.getIdentifier(
+        const CustomSemanticsAction(label: 'Archive'),
+      );
+      expect(data.customSemanticsActionIds, contains(archive));
+      node.owner!.performAction(node.id, SemanticsAction.customAction, archive);
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(archived, [friend.peerId]);
+    });
+
+    testWidgets('the named group owns Open and Archive actions', (tester) async {
+      final group = makeGroup(id: 'named-group', name: 'Riverside');
+      final opened = <String>[];
+      final archived = <String>[];
+      await tester.pumpWidget(
+        buildOrbitScreen(
+          groups: [group],
+          onGroupTap: (row) => opened.add(row.groupId),
+          onArchiveGroup: (row) => archived.add(row.groupId),
+        ),
+      );
+      await tester.pump(Duration.zero);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text(group.group.name), findsOneWidget);
+
+      final identifier = 'orbit.group.${group.groupId}';
+      final node = tester.getSemantics(find.bySemanticsIdentifier(identifier));
+      final data = node.getSemanticsData();
+      expect(data.identifier, identifier);
+      expect(data.label, contains(group.group.name));
+      expect(data.hasAction(SemanticsAction.tap), isTrue);
+      node.owner!.performAction(node.id, SemanticsAction.tap);
+      expect(opened, [group.groupId]);
+
+      final archive = CustomSemanticsAction.getIdentifier(
+        const CustomSemanticsAction(label: 'Archive'),
+      );
+      expect(data.customSemanticsActionIds, contains(archive));
+      node.owner!.performAction(node.id, SemanticsAction.customAction, archive);
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(archived, [group.groupId]);
     });
   });
 

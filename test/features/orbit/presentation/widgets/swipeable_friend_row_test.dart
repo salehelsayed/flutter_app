@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/swipeable_friend_row.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -15,6 +16,7 @@ void main() {
   });
 
   Widget buildSwipeableRow({
+    Locale locale = const Locale('en'),
     bool isArchived = false,
     bool isBlocked = false,
     VoidCallback? onArchive,
@@ -24,7 +26,7 @@ void main() {
     VoidCallback? onDelete,
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
@@ -48,6 +50,150 @@ void main() {
       ),
     );
   }
+
+  group('Orbit row actions', () {
+    for (final language in ['en', 'de', 'ar']) {
+      testWidgets('long press exposes the existing actions in $language', (
+        tester,
+      ) async {
+        final actions = <String>[];
+        await tester.pumpWidget(
+          buildSwipeableRow(
+            locale: Locale(language),
+            onBlock: () => actions.add('block'),
+            onDelete: () => actions.add('delete'),
+            onArchive: () => actions.add('archive'),
+          ),
+        );
+        final row = find.text('Friend Content');
+        final l10n = AppLocalizations.of(tester.element(row))!;
+
+        await tester.longPress(row);
+        await tester.pumpAndSettle(
+          const Duration(milliseconds: 100),
+          EnginePhase.sendSemanticsUpdate,
+          const Duration(seconds: 3),
+        );
+
+        expect(find.text(l10n.orbit_block_action), findsOneWidget);
+        expect(find.text(l10n.orbit_archive_action), findsOneWidget);
+        expect(find.text(l10n.orbit_unblock_action), findsNothing);
+        final delete = find.text(l10n.orbit_delete_action);
+        expect(delete, findsOneWidget);
+        expect(actions, isEmpty);
+
+        await tester.tap(delete);
+        await tester.pumpAndSettle(
+          const Duration(milliseconds: 100),
+          EnginePhase.sendSemanticsUpdate,
+          const Duration(seconds: 3),
+        );
+        expect(actions, ['delete']);
+      });
+    }
+
+    testWidgets('the blocked row exposes working Arabic custom actions', (
+      tester,
+    ) async {
+      final actions = <String>[];
+      await tester.pumpWidget(
+        buildSwipeableRow(
+          locale: const Locale('ar'),
+          isBlocked: true,
+          onUnblock: () => actions.add('unblock'),
+          onArchive: () => actions.add('archive'),
+          onDelete: () => actions.add('delete'),
+        ),
+      );
+      final row = find.byKey(const ValueKey('test-row'));
+      final l10n = AppLocalizations.of(tester.element(row))!;
+      final node = tester.getSemantics(row);
+      int actionId(String label) => CustomSemanticsAction.getIdentifier(
+        CustomSemanticsAction(label: label),
+      );
+      final unblock = actionId(l10n.orbit_unblock_action);
+      expect(
+        node.getSemanticsData().customSemanticsActionIds,
+        unorderedEquals([
+          unblock,
+          actionId(l10n.orbit_archive_action),
+          actionId(l10n.orbit_delete_action),
+        ]),
+      );
+
+      node.owner!.performAction(node.id, SemanticsAction.customAction, unblock);
+      await tester.pump();
+      expect(actions, ['unblock']);
+    });
+
+    testWidgets('Arabic opens the action at the visual left on a right swipe', (
+      tester,
+    ) async {
+      var archives = 0;
+      await tester.pumpWidget(
+        buildSwipeableRow(
+          locale: const Locale('ar'),
+          onArchive: () => archives++,
+        ),
+      );
+      final row = find.text('Friend Content');
+      final l10n = AppLocalizations.of(tester.element(row))!;
+      final action = find.text(l10n.orbit_archive_action);
+      final original = tester.getTopLeft(row).dx;
+      Future<void> settle() => tester.pumpAndSettle(
+        const Duration(milliseconds: 100),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 3),
+      );
+
+      await tester.dragFrom(tester.getCenter(row), const Offset(-250, 0));
+      await settle();
+      expect(action, findsNothing);
+      await tester.dragFrom(tester.getCenter(row), const Offset(250, 0));
+      await settle();
+      expect(tester.getTopLeft(row).dx, greaterThan(original));
+      expect(action, findsOneWidget);
+      expect(tester.getCenter(action).dx, lessThan(tester.getTopLeft(row).dx));
+      await tester.tap(action);
+      await settle();
+      expect(archives, 1);
+    });
+
+    testWidgets('swipe labels are at least 13 pt on readable solid fills', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildSwipeableRow(onBlock: () {}, onArchive: () {}, onDelete: () {}),
+      );
+      await tester.drag(find.text('Friend Content'), const Offset(-250, 0));
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 100),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 3),
+      );
+      for (final label in ['Block', 'Archive', 'Delete']) {
+        final text = find.text(label);
+        final style = tester.widget<Text>(text).style!;
+        expect(style.fontSize, greaterThanOrEqualTo(13), reason: label);
+        Color? fill;
+        tester.element(text).visitAncestorElements((ancestor) {
+          if (ancestor.widget case DecoratedBox(
+            decoration: BoxDecoration(color: final Color color),
+          )) {
+            fill = color;
+            return false;
+          }
+          return true;
+        });
+        expect(fill, isNotNull, reason: label);
+        expect(fill!.a, 1, reason: label);
+        final contrast =
+            (style.color!.computeLuminance() + .05) /
+            (fill!.computeLuminance() + .05);
+        expect(contrast, greaterThanOrEqualTo(4.5), reason: label);
+      }
+    });
+  });
 
   testWidgets('UI25 cancelled row swipe settles closed without an action', (tester) async {
     var archives = 0;
