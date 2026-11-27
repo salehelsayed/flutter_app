@@ -91,17 +91,23 @@ class OrbitSearchDock extends StatelessWidget {
                       if (query.isNotEmpty)
                         GestureDetector(
                           onTap: onClear,
-                          child: Container(
-                            width: 28,
-                            height: 28,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: readableColors.disabledSurface,
-                            ),
-                            child: Icon(
-                              Icons.close,
-                              size: 16,
-                              color: readableColors.iconMuted,
+                          behavior: HitTestBehavior.opaque,
+                          child: SizedBox.square(
+                            dimension: 44,
+                            child: Center(
+                              child: Container(
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: readableColors.disabledSurface,
+                                ),
+                                child: Icon(
+                                  Icons.close,
+                                  size: 16,
+                                  color: readableColors.iconMuted,
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -115,18 +121,24 @@ class OrbitSearchDock extends StatelessWidget {
               // Close button
               GestureDetector(
                 onTap: onClose,
-                child: Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: readableColors.surfaceRaised,
-                    border: Border.all(color: readableColors.border),
-                  ),
-                  child: Icon(
-                    Icons.close,
-                    size: 15,
-                    color: readableColors.iconSecondary,
+                behavior: HitTestBehavior.opaque,
+                child: SizedBox.square(
+                  dimension: 44,
+                  child: Center(
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: readableColors.surfaceRaised,
+                        border: Border.all(color: readableColors.border),
+                      ),
+                      child: Icon(
+                        Icons.close,
+                        size: 15,
+                        color: readableColors.iconSecondary,
+                      ),
+                    ),
                   ),
                 ),
               ),

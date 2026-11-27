@@ -787,25 +787,32 @@ class _MetricAction extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: iconSize, color: resolvedColor),
-              if (label != null) ...[
-                const SizedBox(width: 6),
-                Text(
-                  label!,
-                  key: labelKey,
-                  style: TextStyle(
-                    color: resolvedColor,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ],
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+          child: Center(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: iconSize, color: resolvedColor),
+                  if (label != null) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      label!,
+                      key: labelKey,
+                      style: TextStyle(
+                        color: resolvedColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
         ),
       ),

@@ -298,19 +298,32 @@ class _Thumbnail extends StatelessWidget {
           // Remove button (hidden during upload)
           if (!isUploading && onRemove != null)
             Positioned(
-              top: -6,
-              right: -6,
+              top: 0,
+              right: 0,
               child: GestureDetector(
                 onTap: onRemove,
                 behavior: HitTestBehavior.opaque,
-                child: Container(
-                  width: 22,
-                  height: 22,
-                  decoration: const BoxDecoration(
-                    color: Color.fromRGBO(0, 0, 0, 0.7),
-                    shape: BoxShape.circle,
+                child: SizedBox.square(
+                  dimension: 44,
+                  child: Align(
+                    alignment: Alignment.topRight,
+                    child: Transform.translate(
+                      offset: const Offset(6, -6),
+                      child: Container(
+                        width: 22,
+                        height: 22,
+                        decoration: const BoxDecoration(
+                          color: Color.fromRGBO(0, 0, 0, 0.7),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.close,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
                   ),
-                  child: const Icon(Icons.close, size: 14, color: Colors.white),
                 ),
               ),
             ),
