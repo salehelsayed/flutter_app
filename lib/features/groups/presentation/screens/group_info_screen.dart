@@ -237,25 +237,39 @@ class GroupInfoScreen extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  group.name,
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    color: readableColors.textPrimary,
+          LayoutBuilder(
+            builder: (context, constraints) => Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    group.name,
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: readableColors.textPrimary,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              GroupTypeBadge(type: group.type),
-              if (group.isDissolved) ...[
-                const SizedBox(width: 8),
-                const GroupDissolvedBadge(),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: constraints.maxWidth / 2,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsetsDirectional.only(start: 8),
+                    child: Wrap(
+                      alignment: WrapAlignment.end,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: [
+                        GroupTypeBadge(type: group.type),
+                        if (group.isDissolved) const GroupDissolvedBadge(),
+                      ],
+                    ),
+                  ),
+                ),
               ],
-            ],
+            ),
           ),
           if (group.description != null && group.description!.isNotEmpty) ...[
             const SizedBox(height: 8),
