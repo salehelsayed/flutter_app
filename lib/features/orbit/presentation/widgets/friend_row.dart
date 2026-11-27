@@ -78,27 +78,23 @@ class FriendRow extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               );
               const metaStyle = TextStyle(fontSize: 12);
+              TextPainter textPainter(String text, TextStyle style) =>
+                  TextPainter(
+                    text: TextSpan(
+                      text: text,
+                      style: DefaultTextStyle.of(context).style.merge(style),
+                    ),
+                    textDirection: Directionality.of(context),
+                    textScaler: MediaQuery.textScalerOf(context),
+                    locale: Localizations.maybeLocaleOf(context),
+                  );
               double textWidth(String text, TextStyle style) {
-                final painter = TextPainter(
-                  text: TextSpan(
-                    text: text,
-                    style: DefaultTextStyle.of(context).style.merge(style),
-                  ),
-                  textDirection: Directionality.of(context),
-                  textScaler: MediaQuery.textScalerOf(context),
-                )..layout();
+                final painter = textPainter(text, style)..layout();
                 final width = painter.width;
                 painter.dispose();
                 return width;
               }
 
-              // Retain the horizontal card when it can show a useful name prefix.
-              // Otherwise give name, badge and metadata separate bounded lines.
-              final prefix = friend.username.characters.take(4).toString();
-              final nameWidth = textWidth(
-                prefix.length < friend.username.length ? '$prefix…' : prefix,
-                titleStyle,
-              );
               const badgeStyle = TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
@@ -125,17 +121,30 @@ class FriendRow extends StatelessWidget {
                   : 16.0;
               final timeWidth = textWidth(relativeTime, metaStyle);
               final metaWidth = timeWidth > countWidth ? timeWidth : countWidth;
+              final inlineTitleWidth =
+                  constraints.maxWidth - 48 - 14 - badgeWidth - 10 - metaWidth;
+              final prefix = friend.username.characters.take(4).toString();
+              final lastCharacter = prefix.characters.lastOrNull;
+              final titlePainter = textPainter(friend.username, titleStyle)
+                ..maxLines = 1
+                ..ellipsis = '…'
+                ..layout(maxWidth: math.max(0.0, inlineTitleWidth));
               final stacked =
-                  constraints.maxWidth <
-                  48 + 14 + nameWidth + badgeWidth + 10 + metaWidth;
+                  inlineTitleWidth <= 0 ||
+                  (titlePainter.didExceedMaxLines &&
+                      lastCharacter != null &&
+                      titlePainter.getBoxesForSelection(
+                            TextSelection(
+                              baseOffset: prefix.length - lastCharacter.length,
+                              extentOffset: prefix.length,
+                            ),
+                          ).length !=
+                          1);
+              titlePainter.dispose();
               final title = Text(
                 friend.username,
                 maxLines: 1,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: readableColors.textPrimary,
-                ),
+                style: titleStyle.copyWith(color: readableColors.textPrimary),
                 overflow: TextOverflow.ellipsis,
               );
               final badge = Container(
