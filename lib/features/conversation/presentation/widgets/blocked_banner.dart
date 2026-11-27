@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Banner shown in place of ComposeArea when a contact is blocked.
@@ -12,12 +13,20 @@ class BlockedBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final colors = context.backgroundReadableColors;
+    final light = colors.isLightSurface;
 
     return Container(
-      decoration: const BoxDecoration(
-        color: Color.fromRGBO(255, 255, 255, 0.04),
+      decoration: BoxDecoration(
+        color: light
+            ? colors.surfaceSubtle
+            : const Color.fromRGBO(255, 255, 255, 0.04),
         border: Border(
-          top: BorderSide(color: Color.fromRGBO(255, 255, 255, 0.08)),
+          top: BorderSide(
+            color: light
+                ? colors.divider
+                : const Color.fromRGBO(255, 255, 255, 0.08),
+          ),
         ),
       ),
       child: SafeArea(
@@ -27,19 +36,23 @@ class BlockedBanner extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
+              Icon(
                 Icons.block,
                 size: 16,
-                color: Color.fromRGBO(255, 255, 255, 0.35),
+                color: light
+                    ? colors.iconSecondary
+                    : const Color.fromRGBO(255, 255, 255, 0.35),
               ),
               const SizedBox(width: 8),
               Flexible(
                 child: Text(
                   l10n.conversation_blocked_contact,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w400,
-                    color: Color.fromRGBO(255, 255, 255, 0.5),
+                    color: light
+                        ? colors.textSecondary
+                        : const Color.fromRGBO(255, 255, 255, 0.5),
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -50,10 +63,10 @@ class BlockedBanner extends StatelessWidget {
                 onTap: onUnblock,
                 child: Text(
                   l10n.conversation_unblock,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF10B981),
+                    color: light ? colors.link : const Color(0xFF10B981),
                   ),
                 ),
               ),

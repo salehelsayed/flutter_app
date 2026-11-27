@@ -120,7 +120,7 @@ class _NavBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
-        gradient: const LinearGradient(colors: NavBarTheme.badgeGradientColors),
+        color: NavBarTheme.badgeColor,
         boxShadow: const [
           BoxShadow(
             color: NavBarTheme.badgeShadowColor,

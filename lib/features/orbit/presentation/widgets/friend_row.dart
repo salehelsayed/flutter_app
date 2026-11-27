@@ -147,11 +147,13 @@ class FriendRow extends StatelessWidget {
                 ),
                 child: Text(
                   l10n.orbit_inner_circle_badge,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.3,
-                    color: Color(0xCC1DB954), // rgba(29,185,84,0.8)
+                    color: readableColors.isLightSurface
+                        ? const Color(0xFF166534)
+                        : const Color(0xCC1DB954),
                   ),
                 ),
               );

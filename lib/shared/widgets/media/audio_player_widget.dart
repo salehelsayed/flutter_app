@@ -7,10 +7,12 @@ import 'package:flutter_app/core/media/media_audio_session.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+
 import 'media_display_helpers.dart';
 import 'voice_playback_speed.dart';
 import 'waveform_seek_bar.dart';
@@ -707,6 +709,17 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
         : '--:--';
 
     final hasWaveform = widget.attachment.waveform != null;
+    final colors = context.backgroundReadableColors;
+    final light = colors.isLightSurface;
+    final accent = light ? colors.link : const Color(0xFF4ECDC4);
+    final playFill = light
+        ? (_isAvailable ? colors.surfaceSubtle : colors.disabledSurface)
+        : (_isAvailable
+              ? const Color.fromRGBO(78, 205, 196, 0.20)
+              : const Color.fromRGBO(255, 255, 255, 0.06));
+    final playColor = light
+        ? colors.textPrimary
+        : (_isAvailable ? accent : const Color.fromRGBO(255, 255, 255, 0.70));
 
     // Screen readers otherwise hear only the duration and the time, with no
     // hint that the bubble is a voice message.
@@ -722,16 +735,12 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
               height: 32,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: _isAvailable
-                    ? const Color.fromRGBO(78, 205, 196, 0.20)
-                    : const Color.fromRGBO(255, 255, 255, 0.06),
+                color: playFill,
               ),
               child: Icon(
                 _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
                 size: 14,
-                color: _isAvailable
-                    ? const Color(0xFF4ecdc4)
-                    : const Color.fromRGBO(255, 255, 255, 0.25),
+                color: playColor,
               ),
             ),
           ),
@@ -749,14 +758,11 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                   : SliderTheme(
                       data: SliderThemeData(
                         trackHeight: 3,
-                        activeTrackColor: const Color(0xFF4ecdc4),
-                        inactiveTrackColor: const Color.fromRGBO(
-                          255,
-                          255,
-                          255,
-                          0.15,
-                        ),
-                        thumbColor: const Color(0xFF4ecdc4),
+                        activeTrackColor: accent,
+                        inactiveTrackColor: light
+                            ? colors.border
+                            : const Color.fromRGBO(255, 255, 255, 0.15),
+                        thumbColor: accent,
                         thumbShape: const RoundSliderThumbShape(
                           enabledThumbRadius: 5,
                         ),
@@ -775,10 +781,12 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
           // Duration label
           Text(
             durationText,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w400,
-              color: Color.fromRGBO(255, 255, 255, 0.25),
+              color: light
+                  ? colors.textSecondary
+                  : const Color.fromRGBO(255, 255, 255, 0.25),
             ),
           ),
           const SizedBox(width: 4),
@@ -790,7 +798,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
               style: TextButton.styleFrom(
                 minimumSize: const Size(44, 44),
                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                foregroundColor: const Color(0xFF4ecdc4),
+                foregroundColor: accent,
                 textStyle: const TextStyle(fontSize: 11),
               ),
               onPressed: _cycleSpeed,
