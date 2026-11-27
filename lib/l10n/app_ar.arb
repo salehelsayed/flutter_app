@@ -10,6 +10,8 @@
   "a11y_remove_post_like": "إلغاء الإعجاب",
   "a11y_open_post_comments": "فتح التعليقات",
   "a11y_pin_post": "تثبيت المنشور",
+  "a11y_copy_peer_id": "نسخ معرّف النظير",
+  "a11y_change_profile_photo": "تغيير صورة الملف الشخصي",
   "onboarding_new_here": "أنا جديد هنا",
   "onboarding_new_desc": "أنشئ هوية جديدة",
   "onboarding_load_key": "استرجاع مفتاحي",

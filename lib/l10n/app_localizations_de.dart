@@ -39,6 +39,12 @@ class AppLocalizationsDe extends AppLocalizations {
   String get a11y_pin_post => 'Beitrag anpinnen';
 
   @override
+  String get a11y_copy_peer_id => 'Peer-ID kopieren';
+
+  @override
+  String get a11y_change_profile_photo => 'Profilfoto ändern';
+
+  @override
   String get onboarding_new_here => 'Ich bin neu hier';
 
   @override
@@ -3287,7 +3293,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get identity_restore_action => 'Identität wiederherstellen';
 
   @override
-  String get settings_peer_id_title => 'PEER-ID';
+  String get settings_peer_id_title => 'Peer-ID';
 
   @override
   String intro_and_more(String names, int count) {

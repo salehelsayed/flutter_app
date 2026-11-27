@@ -10,6 +10,8 @@
   "a11y_remove_post_like": "„Gefällt mir“ entfernen",
   "a11y_open_post_comments": "Kommentare öffnen",
   "a11y_pin_post": "Beitrag anpinnen",
+  "a11y_copy_peer_id": "Peer-ID kopieren",
+  "a11y_change_profile_photo": "Profilfoto ändern",
   "onboarding_new_here": "Ich bin neu hier",
   "onboarding_new_desc": "Neue Identität erstellen",
   "onboarding_load_key": "Schlüssel wiederherstellen",
@@ -1502,7 +1504,7 @@
   "startup_failed_title": "Initialisierung fehlgeschlagen",
   "startup_saved_account_unavailable": "Dein gespeichertes Konto kann gerade nicht geöffnet werden. Deine Daten bleiben erhalten. Versuche es erneut.",
   "identity_restore_action": "Identität wiederherstellen",
-  "settings_peer_id_title": "PEER-ID",
+  "settings_peer_id_title": "Peer-ID",
   "intro_and_more": "{names} und {count} weitere",
   "@intro_and_more": {
     "placeholders": {

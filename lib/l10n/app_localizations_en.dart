@@ -39,6 +39,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get a11y_pin_post => 'Pin post';
 
   @override
+  String get a11y_copy_peer_id => 'Copy Peer ID';
+
+  @override
+  String get a11y_change_profile_photo => 'Change profile photo';
+
+  @override
   String get onboarding_new_here => 'I\'m new here';
 
   @override
@@ -3219,7 +3225,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get identity_restore_action => 'Restore identity';
 
   @override
-  String get settings_peer_id_title => 'PEER ID';
+  String get settings_peer_id_title => 'Peer ID';
 
   @override
   String intro_and_more(String names, int count) {

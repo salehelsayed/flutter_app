@@ -160,6 +160,18 @@ abstract class AppLocalizations {
   /// **'Pin post'**
   String get a11y_pin_post;
 
+  /// No description provided for @a11y_copy_peer_id.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Peer ID'**
+  String get a11y_copy_peer_id;
+
+  /// No description provided for @a11y_change_profile_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'Change profile photo'**
+  String get a11y_change_profile_photo;
+
   /// No description provided for @onboarding_new_here.
   ///
   /// In en, this message translates to:
@@ -5351,7 +5363,7 @@ abstract class AppLocalizations {
   /// No description provided for @settings_peer_id_title.
   ///
   /// In en, this message translates to:
-  /// **'PEER ID'**
+  /// **'Peer ID'**
   String get settings_peer_id_title;
 
   /// No description provided for @intro_and_more.

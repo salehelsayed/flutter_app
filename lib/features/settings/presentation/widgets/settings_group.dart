@@ -42,7 +42,7 @@ class SettingsGroupCard extends StatelessWidget {
             child: Text(
               label,
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 13,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.88,
                 color: readableColors.textMuted,
@@ -85,6 +85,7 @@ class SettingsListRow extends StatelessWidget {
   final int? subtitleMaxLines;
   final String? value;
   final Widget? trailing;
+  final double verticalPadding;
   final VoidCallback? onTap;
 
   const SettingsListRow({
@@ -96,6 +97,7 @@ class SettingsListRow extends StatelessWidget {
     this.subtitleMaxLines = 2,
     this.value,
     this.trailing,
+    this.verticalPadding = 6,
     this.onTap,
   });
 
@@ -108,7 +110,10 @@ class SettingsListRow extends StatelessWidget {
       onTap: onTap,
       child: Container(
         constraints: const BoxConstraints(minHeight: 44),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        padding: EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: verticalPadding,
+        ),
         child: LayoutBuilder(
           builder: (context, constraints) => Row(
             children: [

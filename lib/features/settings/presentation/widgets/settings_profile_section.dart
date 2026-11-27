@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/editable_username_widget.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
 
 /// Profile section displaying avatar with camera overlay and editable username.
 class SettingsProfileSection extends StatelessWidget {
@@ -46,23 +48,35 @@ class SettingsProfileSection extends StatelessWidget {
                 Positioned(
                   bottom: 0,
                   right: 0,
-                  child: GestureDetector(
-                    onTap: onPickAvatar,
-                    child: Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: cameraBackground,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: readableColors.surfaceBase,
-                          width: 2,
+                  child: ActionSemantics(
+                    label: AppLocalizations.of(context)!
+                        .a11y_change_profile_photo,
+                    enabled: onPickAvatar != null,
+                    child: GestureDetector(
+                      onTap: onPickAvatar,
+                      behavior: HitTestBehavior.opaque,
+                      child: SizedBox.square(
+                        dimension: 44,
+                        child: Align(
+                          alignment: Alignment.bottomRight,
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: cameraBackground,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: readableColors.surfaceBase,
+                                width: 2,
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.camera_alt,
+                              size: 16,
+                              color: Colors.white,
+                            ),
+                          ),
                         ),
-                      ),
-                      child: const Icon(
-                        Icons.camera_alt,
-                        size: 16,
-                        color: Colors.white,
                       ),
                     ),
                   ),

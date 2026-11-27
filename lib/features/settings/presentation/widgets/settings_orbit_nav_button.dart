@@ -8,6 +8,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 /// Settings-local Orbit affordance matching the Orbit search trigger's
 /// 52px glass-circle vocabulary while preserving a square hit target.
 class SettingsOrbitNavButton extends StatelessWidget {
+  static const double diameter = 52;
+
   final VoidCallback onTap;
 
   const SettingsOrbitNavButton({super.key, required this.onTap});
@@ -24,8 +26,8 @@ class SettingsOrbitNavButton extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: Container(
-          width: 52,
-          height: 52,
+          width: diameter,
+          height: diameter,
           decoration: const BoxDecoration(
             shape: BoxShape.circle,
             boxShadow: [

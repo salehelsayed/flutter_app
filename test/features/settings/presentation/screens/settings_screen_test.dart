@@ -305,7 +305,7 @@ void main() {
     expect(find.text('Video Quality'), findsOneWidget);
     expect(find.text('Share People Nearby'), findsOneWidget);
     expect(find.text('On'), findsOneWidget);
-    expect(find.text('RECOVERY PHRASE'), findsOneWidget);
+    expect(find.text('Recovery phrase'), findsOneWidget);
     // The peer-id copy trailing reflects the copied state.
     expect(find.byIcon(Icons.check), findsOneWidget);
   });

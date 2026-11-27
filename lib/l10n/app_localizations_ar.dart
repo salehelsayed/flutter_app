@@ -39,6 +39,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get a11y_pin_post => 'تثبيت المنشور';
 
   @override
+  String get a11y_copy_peer_id => 'نسخ معرّف النظير';
+
+  @override
+  String get a11y_change_profile_photo => 'تغيير صورة الملف الشخصي';
+
+  @override
   String get onboarding_new_here => 'أنا جديد هنا';
 
   @override

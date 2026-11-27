@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_group.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_orbit_nav_button.dart';
@@ -144,6 +145,7 @@ class SettingsScreen extends StatelessWidget {
           icon: Icons.fingerprint,
           label: l10n.settings_peer_id_title,
           value: peerId,
+          verticalPadding: 0,
           trailing: _PeerIdCopyButton(
             isCopied: isPeerIdCopied,
             onCopy: onCopyPeerId,
@@ -153,7 +155,7 @@ class SettingsScreen extends StatelessWidget {
         SettingsListRow(
           key: const ValueKey('settings-row-recovery'),
           icon: Icons.key_outlined,
-          label: l10n.settings_recovery_title,
+          label: l10n.mnemonic_title,
           onTap: onOpenRecoverySheet,
         ),
     ];
@@ -240,7 +242,7 @@ class SettingsScreen extends StatelessWidget {
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 20,
-                        vertical: 16,
+                        vertical: 14,
                       ),
                       decoration: BoxDecoration(
                         color: readableColors.glassSurface,
@@ -251,22 +253,33 @@ class SettingsScreen extends StatelessWidget {
                       child: Row(
                         children: [
                           // Back button
-                          GestureDetector(
-                            onTap: onBack,
-                            child: Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: readableColors.surfaceSubtle,
-                                border: Border.all(
-                                  color: readableColors.border,
+                          ActionSemantics(
+                            label: MaterialLocalizations.of(context)
+                                .backButtonTooltip,
+                            enabled: onBack != null,
+                            child: GestureDetector(
+                              onTap: onBack,
+                              behavior: HitTestBehavior.opaque,
+                              child: SizedBox.square(
+                                dimension: 44,
+                                child: Center(
+                                  child: Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: readableColors.surfaceSubtle,
+                                      border: Border.all(
+                                        color: readableColors.border,
+                                      ),
+                                    ),
+                                    child: Icon(
+                                      Icons.chevron_left,
+                                      size: 20,
+                                      color: readableColors.iconPrimary,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              child: Icon(
-                                Icons.chevron_left,
-                                size: 20,
-                                color: readableColors.iconPrimary,
                               ),
                             ),
                           ),
@@ -284,8 +297,8 @@ class SettingsScreen extends StatelessWidget {
                           ),
                           // Right spacer
                           SizedBox(
-                            width: 40,
-                            height: 40,
+                            width: 44,
+                            height: 44,
                             child: onOpenSafetySupport == null
                                 ? null
                                 : IconButton(
@@ -310,7 +323,11 @@ class SettingsScreen extends StatelessWidget {
                   child: SingleChildScrollView(
                     physics: const BouncingScrollPhysics(),
                     padding: EdgeInsets.only(
-                      bottom: (showNavigationBar ? 60 : 24) + bottomInset,
+                      bottom:
+                          (showNavigationBar
+                              ? SettingsOrbitNavButton.diameter + 16
+                              : 24) +
+                          bottomInset,
                     ),
                     child: Column(
                       children: [
@@ -400,24 +417,34 @@ class _PeerIdCopyButton extends StatelessWidget {
         ? const Color(0xFF0F766E)
         : const Color(0xFF14B8A6);
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onCopy,
-      child: Container(
-        width: 32,
-        height: 32,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          color: readableColors.surfaceSubtle,
-          border: Border.all(color: readableColors.glassBorder),
-        ),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          child: Icon(
-            isCopied ? Icons.check : Icons.copy,
-            key: ValueKey(isCopied),
-            size: 15,
-            color: isCopied ? copiedColor : readableColors.iconSecondary,
+    return ActionSemantics(
+      label: AppLocalizations.of(context)!.a11y_copy_peer_id,
+      enabled: onCopy != null,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onCopy,
+        child: SizedBox.square(
+          dimension: 44,
+          child: Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: readableColors.surfaceSubtle,
+                border: Border.all(color: readableColors.glassBorder),
+              ),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: Icon(
+                  isCopied ? Icons.check : Icons.copy,
+                  key: ValueKey(isCopied),
+                  size: 15,
+                  color: isCopied ? copiedColor : readableColors.iconSecondary,
+                ),
+              ),
+            ),
           ),
         ),
       ),

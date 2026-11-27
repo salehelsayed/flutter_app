@@ -10,6 +10,8 @@
   "a11y_remove_post_like": "Remove like",
   "a11y_open_post_comments": "Open comments",
   "a11y_pin_post": "Pin post",
+  "a11y_copy_peer_id": "Copy Peer ID",
+  "a11y_change_profile_photo": "Change profile photo",
   "onboarding_new_here": "I'm new here",
   "onboarding_new_desc": "Generate a fresh identity",
   "onboarding_load_key": "Load my key",
@@ -1672,7 +1674,7 @@
   "startup_failed_title": "Failed to initialize",
   "startup_saved_account_unavailable": "Your saved account cannot be opened right now. Your data has been kept. Try again.",
   "identity_restore_action": "Restore identity",
-  "settings_peer_id_title": "PEER ID",
+  "settings_peer_id_title": "Peer ID",
   "intro_and_more": "{names} and {count} more",
   "@intro_and_more": {
     "placeholders": {
