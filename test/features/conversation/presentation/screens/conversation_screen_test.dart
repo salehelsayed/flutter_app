@@ -495,6 +495,7 @@ void main() {
 
           var introductions = 0;
           var dismissals = 0;
+          final sent = <String>[];
           await tester
               .pumpWidget(
                 buildTestWidget(
@@ -502,6 +503,7 @@ void main() {
                   showIntroBanner: true,
                   onMakeIntroductions: () => introductions++,
                   onMaybeLater: () => dismissals++,
+                  onSend: sent.add,
                   textScaler: const TextScaler.linear(3.1),
                   messages: [
                     if (withHistory)
@@ -529,6 +531,11 @@ void main() {
           expect(composer, findsOneWidget);
           expect(fieldBounds.height, greaterThanOrEqualTo(44));
           expect(fieldBounds.bottom, lessThanOrEqualTo(viewport.height));
+          if (withHistory) {
+            final list = find.byKey(const ValueKey('messages'));
+            expect(tester.getSize(list).height, greaterThanOrEqualTo(44));
+            expect(list.hitTestable(), findsOneWidget);
+          }
 
           final l10n = AppLocalizations.of(tester.element(field))!;
           final make = find.widgetWithText(
@@ -550,6 +557,11 @@ void main() {
           final editable = tester.widget<EditableText>(find.byType(EditableText));
           expect(editable.focusNode.hasFocus, isTrue);
           expect(editable.controller.text, 'Draft');
+          final send = find.byTooltip(l10n.action_send_message);
+          expect(tester.getSize(send).shortestSide, greaterThanOrEqualTo(44));
+          expect(send.hitTestable(), findsOneWidget);
+          await tester.tap(send).timeout(deadline);
+          expect(sent, ['Draft']);
           expect(tester.takeException(), isNull);
         },
       );
