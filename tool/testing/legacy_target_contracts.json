@@ -552,7 +552,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/conversation_bridge_test.dart": "df17c8213e730d15690c07ebe5602fd26692b0b0103b20c0a77bec38f56bc29b"
+        "integration_test/conversation_bridge_test.dart": "2f34d45a5ec6fbe9e3128d06c15a29785ecc2af2f530edff6c94f5c2cafd6605"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -2441,7 +2441,7 @@
       ],
       "sources": {
         "integration_test/scripts/run_wifi_relay_fallback_smoke.dart": "6706533051d24379ac9593ff3d15a65dca637831672752eccf7d660fb69cc9b4",
-        "integration_test/wifi_relay_fallback_smoke_test.dart": "80c1e3b80f127303bdd46dfb8df73244dfa5cb49db85a5007db4b529e3a1aac2"
+        "integration_test/wifi_relay_fallback_smoke_test.dart": "c9e76ad919ad0e963d755bf02ccfc78366885ac17b9619a4d56b503a142d088b"
       },
       "audit": "All S1-S4 device scenarios require the existing CLI orchestrator, which also verifies four host results. Pin the physical Android and prohibit automatic campaign retries.",
       "owns": [
@@ -2774,7 +2774,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/conversation_bridge_test.dart": "df17c8213e730d15690c07ebe5602fd26692b0b0103b20c0a77bec38f56bc29b"
+        "integration_test/conversation_bridge_test.dart": "2f34d45a5ec6fbe9e3128d06c15a29785ecc2af2f530edff6c94f5c2cafd6605"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4256,7 +4256,7 @@
       ],
       "sources": {
         "integration_test/scripts/run_wifi_relay_fallback_smoke.dart": "6706533051d24379ac9593ff3d15a65dca637831672752eccf7d660fb69cc9b4",
-        "integration_test/wifi_relay_fallback_smoke_test.dart": "80c1e3b80f127303bdd46dfb8df73244dfa5cb49db85a5007db4b529e3a1aac2"
+        "integration_test/wifi_relay_fallback_smoke_test.dart": "c9e76ad919ad0e963d755bf02ccfc78366885ac17b9619a4d56b503a142d088b"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
