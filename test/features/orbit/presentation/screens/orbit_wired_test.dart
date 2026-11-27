@@ -3412,6 +3412,112 @@ void main() {
       await finishThoughtCase(tester);
     });
 
+    for (final draft in ['empty', 'text', 'photo', 'voice', 'Arabic text']) {
+      testWidgets('thought swipe-down checks for a $draft draft', (tester) async {
+        const deadline = Duration(seconds: 3);
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = InMemoryPostRepository();
+        addTearDown(posts.dispose);
+        final recording = FakeAudioRecorderService()
+          ..fakeOutputPath = '/tmp/swipe-draft.m4a'
+          ..fakeDurationMs = 2500;
+        addTearDown(recording.dispose);
+        if (draft == 'photo') {
+          final dir = Directory.systemTemp.createTempSync('orbit-swipe-draft-');
+          addTearDown(() => dir.deleteSync(recursive: true));
+          final photo = File('${dir.path}/draft.jpg')
+            ..writeAsBytesSync(img.encodeJpg(img.Image(width: 40, height: 30)));
+          final picker = ImagePickerPlatform.instance;
+          ImagePickerPlatform.instance = _OnePhotoPicker(photo.path);
+          addTearDown(() => ImagePickerPlatform.instance = picker);
+        }
+        final rtl = draft == 'Arabic text';
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            audioRecorderService: recording,
+            locale: rtl ? const Locale('ar') : const Locale('en'),
+          ),
+        ).timeout(deadline);
+        await pumpOrbitFrames(tester, count: 6).timeout(deadline);
+        final composer = find.byType(ComposePostSheet);
+        final header = find.descendant(
+          of: composer,
+          matching: find.text(rtl ? 'خاطرة جديدة' : 'New thought'),
+        );
+        final prompt = find.text(
+          rtl ? 'هل تريد حذف مسودة هذه الخاطرة؟' : 'Discard this thought?',
+        );
+        final keepEditing = find.text(rtl ? 'متابعة التحرير' : 'Keep editing');
+        final discard = find.text(rtl ? 'حذف المسودة' : 'Discard');
+        final field = find.descendant(of: composer, matching: find.byType(TextField));
+        final photoPreview = find.byType(ThoughtPhotoDraftPreview);
+        final voiceCard = find.byKey(const ValueKey('thought-voice-card'));
+        Future<void> openComposer() async {
+          await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')))
+              .timeout(deadline);
+          await pumpOrbitFrames(tester, count: 6).timeout(deadline);
+          expect(composer, findsOneWidget);
+        }
+
+        Future<void> swipeDown() async {
+          await tester.fling(header, const Offset(0, 320), 1200).timeout(deadline);
+          await pumpOrbitFrames(tester, count: 6).timeout(deadline);
+        }
+
+        await openComposer();
+        switch (draft) {
+          case 'text':
+          case 'Arabic text':
+            await tester.enterText(field, rtl ? 'مسودة' : 'Half a thought')
+                .timeout(deadline);
+            await tester.pump().timeout(deadline);
+          case 'photo':
+            await tester.tap(find.byTooltip('Media')).timeout(deadline);
+            await pumpOrbitFrames(tester).timeout(deadline);
+            expect(photoPreview, findsOneWidget);
+          case 'voice':
+            await tester.tap(find.byTooltip('Voice')).timeout(deadline);
+            await tester.pump().timeout(deadline);
+            await recording.triggerAutoStop().timeout(deadline);
+            await tester.pump().timeout(deadline);
+            expect(voiceCard, findsOneWidget);
+        }
+        await swipeDown();
+        if (draft == 'empty') {
+          expect(composer, findsNothing);
+          expect(prompt, findsNothing);
+        } else {
+          expect(prompt, findsOneWidget);
+          if (rtl) {
+            expect(Directionality.of(tester.element(discard)), TextDirection.rtl);
+            expect(tester.getCenter(discard).dy, lessThan(tester.getCenter(keepEditing).dy));
+          }
+          await tester.tap(keepEditing).timeout(deadline);
+          await pumpOrbitFrames(tester, count: 6).timeout(deadline);
+          expect(composer, findsOneWidget);
+          expect(prompt, findsNothing);
+          if (draft == 'photo') expect(photoPreview, findsOneWidget);
+          if (draft == 'voice') expect(voiceCard, findsOneWidget);
+          if (draft == 'text' || rtl) {
+            expect(tester.widget<TextField>(field).controller!.text,
+                rtl ? 'مسودة' : 'Half a thought');
+          }
+          await swipeDown();
+          await tester.tap(discard).timeout(deadline);
+          await pumpOrbitFrames(tester, count: 6).timeout(deadline);
+          expect(composer, findsNothing);
+          await openComposer();
+          expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+          expect(photoPreview, findsNothing);
+          expect(voiceCard, findsNothing);
+        }
+        await finishThoughtCase(tester).timeout(deadline);
+      });
+    }
+
     testWidgets(
       'closing the thought composer keeps the draft for next time; sharing clears it',
       (tester) async {
