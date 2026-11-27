@@ -1190,14 +1190,28 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           if (!contact.isBlocked) contact,
       ];
       if (!mounted) return;
-      await showModalBottomSheet<void>(
-        context: context,
+      final navigator = Navigator.of(context);
+      final material = MaterialLocalizations.of(context);
+      final animation = BottomSheet.createAnimationController(
+        navigator.overlay!,
+      );
+      final route = ModalBottomSheetRoute<void>(
+        capturedThemes: InheritedTheme.capture(
+          from: context,
+          to: navigator.context,
+        ),
+        barrierLabel: material.scrimLabel,
+        barrierOnTapHint: material.scrimOnTapHint(material.bottomSheetLabel),
+        modalBarrierColor: Theme.of(context).bottomSheetTheme.modalBarrierColor,
         isScrollControlled: true,
         // The composer's header can reach the top; keep it below the notch.
         useSafeArea: true,
         backgroundColor: Colors.transparent,
+        enableDrag: false,
+        transitionAnimationController: animation,
         builder: (_) => ComposePostSheet(
           thoughtsOnly: true,
+          swipeAnimation: animation,
           replacesCurrentThought: _thoughtsByPeerId.containsKey(
             identity.peerId,
           ),
@@ -1267,6 +1281,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           },
         ),
       );
+      try {
+        await navigator.push(route);
+        await route.completed;
+      } finally {
+        animation.dispose();
+      }
       // The sheet hands its draft back only once its close animation ends.
       await closed.future;
     } finally {

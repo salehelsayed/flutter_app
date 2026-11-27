@@ -190,6 +190,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get thought_compose_header => 'New thought';
 
   @override
+  String get thought_compose_discard_title => 'Discard this thought?';
+
+  @override
+  String get thought_compose_discard => 'Discard';
+
+  @override
+  String get thought_compose_keep_editing => 'Keep editing';
+
+  @override
   String get thought_compose_share => 'Share';
 
   @override

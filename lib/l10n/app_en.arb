@@ -66,6 +66,9 @@
   "@thought_compose_header": {
     "description": "Title in the middle of the Thought composer header, between Cancel and Share."
   },
+  "thought_compose_discard_title": "Discard this thought?",
+  "thought_compose_discard": "Discard",
+  "thought_compose_keep_editing": "Keep editing",
   "thought_compose_share": "Share",
   "thought_compose_lifetime": "All your friends see this for 24 hours",
   "thought_compose_replaces": "Sharing replaces the thought you have up now",

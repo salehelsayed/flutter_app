@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -101,8 +102,11 @@ class ComposePostSheet extends StatefulWidget {
   final Future<String?> Function(String filePath)? transcribeVoice;
   final VoidCallback? Function()? captureVoiceToTextUse;
 
-  /// Runs once as the sheet goes away: the unshared draft, or null after a
-  /// share or when nothing was left to keep.
+  /// The route's animation when this sheet owns the swipe-to-dismiss gesture.
+  final AnimationController? swipeAnimation;
+
+  /// Runs once as the sheet goes away: the unshared draft, or null when it
+  /// was shared, discarded, or empty.
   final ValueChanged<ComposePostResult?>? onClosed;
 
   const ComposePostSheet({
@@ -126,6 +130,7 @@ class ComposePostSheet extends StatefulWidget {
     this.activePinCount = 0,
     this.onManagePins,
     this.initialDraft,
+    this.swipeAnimation,
     this.onClosed,
   }) : assert(
          onSubmit != null || onSubmitWithOutcome != null,
@@ -151,6 +156,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   final Set<String> _selectedPeerIds = <String>{};
   bool _isSubmitting = false;
   bool _shared = false;
+  bool _discarded = false;
+  bool _confirmingSwipeDiscard = false;
   bool _isAttaching = false;
   VoiceRecordingState _recordingState = VoiceRecordingState.idle;
   bool _pendingRecordingAbort = false;
@@ -412,6 +419,56 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     return ComposePostSubmitOutcome.closeSheet;
   }
 
+  Future<void> _dismissBySwipe(AnimationController animation) async {
+    if (_confirmingSwipeDiscard) {
+      animation.forward();
+      return;
+    }
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) return;
+
+    final hasDraft =
+        _textController.text.trim().isNotEmpty ||
+        _mediaDrafts.isNotEmpty ||
+        _keptRecording != null ||
+        _recordingState == VoiceRecordingState.recording ||
+        _recordingState == VoiceRecordingState.stopping;
+    if (!hasDraft || _isSubmitting) {
+      Navigator.of(context).pop();
+      return;
+    }
+
+    animation.forward();
+    _confirmingSwipeDiscard = true;
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      final discard = await showCupertinoModalPopup<bool>(
+        context: context,
+        useRootNavigator: false,
+        builder: (context) => CupertinoActionSheet(
+          title: Text(l10n.thought_compose_discard_title),
+          actions: [
+            CupertinoActionSheetAction(
+              isDestructiveAction: true,
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.thought_compose_discard),
+            ),
+          ],
+          cancelButton: CupertinoActionSheetAction(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.thought_compose_keep_editing),
+          ),
+        ),
+      );
+      if (discard == true && mounted && route.isCurrent) {
+        _discarded = true;
+        Navigator.of(context).pop();
+      }
+    } finally {
+      _confirmingSwipeDiscard = false;
+    }
+  }
+
   @override
   void dispose() {
     final text = _textController.text;
@@ -421,7 +478,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       _mediaDrafts = _withVoice(_voiceDraft(kept, _keptWaveform));
     }
     final keep =
-        !_shared && (text.trim().isNotEmpty || _mediaDrafts.isNotEmpty);
+        !_shared &&
+        !_discarded &&
+        (text.trim().isNotEmpty || _mediaDrafts.isNotEmpty);
     widget.onClosed?.call(
       keep
           ? ComposePostResult(
@@ -1373,7 +1432,19 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           ),
       ],
     );
-    if (widget.thoughtsOnly) return _thoughtSheet(context, body);
+    if (widget.thoughtsOnly) {
+      final sheet = _thoughtSheet(context, body);
+      final animation = widget.swipeAnimation;
+      if (animation == null) return sheet;
+      return BottomSheet(
+        animationController: animation,
+        onClosing: () => unawaited(_dismissBySwipe(animation)),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        showDragHandle: false,
+        builder: (_) => sheet,
+      );
+    }
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(
