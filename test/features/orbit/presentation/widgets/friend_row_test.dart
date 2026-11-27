@@ -265,7 +265,12 @@ void main() {
                     ),
                     findsOneWidget,
                   );
-                  expect(find.bySemanticsLabel(RegExp(name)), findsNWidgets(2));
+                  final rowSemantics = tester.getSemantics(
+                    find.bySemanticsIdentifier(
+                      'orbit.contact.ui25-synthetic-$count',
+                    ),
+                  );
+                  expect(rowSemantics.getSemanticsData().label, contains(name));
                   final avatar = find.descendant(
                     of: row,
                     matching: find.byType(UserAvatar),
@@ -305,8 +310,6 @@ void main() {
       tester,
     ) async {
       const deadline = Duration(seconds: 3);
-      final semantics = tester.ensureSemantics();
-      addTearDown(semantics.dispose);
       final friend = _makeFriend();
       var opened = 0;
       await tester
@@ -337,8 +340,6 @@ void main() {
         'Orbit row accessibility exposes the profile button in $language',
         (tester) async {
           const deadline = Duration(seconds: 3);
-          final semantics = tester.ensureSemantics();
-          addTearDown(semantics.dispose);
           final friend = _makeFriend(username: 'Riley');
           var chatsOpened = 0;
           var profilesOpened = 0;

@@ -289,8 +289,6 @@ void main() {
       tester,
     ) async {
       const deadline = Duration(seconds: 3);
-      final semantics = tester.ensureSemantics();
-      addTearDown(semantics.dispose);
       final group = _group(
         name: 'Group discussion',
         senderUsername: 'Riley',
