@@ -97,19 +97,31 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      // Fast for the rise-up entrance; the classic scale+fade keeps 500ms.
-      duration: Duration(milliseconds: widget.riseUp ? 220 : 500),
+      duration: Duration(milliseconds: widget.riseUp ? 220 : 200),
     );
-    _scaleAnimation = CurvedAnimation(parent: _controller, curve: Curves.ease);
+    _scaleAnimation = CurvedAnimation(
+      parent: _controller,
+      curve: widget.riseUp ? Curves.ease : Curves.easeOut,
+    );
 
     if (widget.motionEnabled && widget.animateEntrance) {
       final delay = widget.entranceDelayMs ?? widget.globalIndex * 40;
       Future.delayed(Duration(milliseconds: delay), () {
-        if (mounted) _controller.forward();
+        if (mounted && widget.motionEnabled && widget.animateEntrance) {
+          _controller.forward();
+        }
       });
     } else {
       // Reduce Motion OR suppressed entrance: appear fully, no animation.
       _controller.value = 1.0;
+    }
+  }
+
+  @override
+  void didUpdateWidget(OrbitalAvatar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.motionEnabled || !widget.animateEntrance) {
+      _controller.value = 1;
     }
   }
 
@@ -224,8 +236,7 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
       builder: (context, child) {
         final v = _scaleAnimation.value;
         final scaled = Transform.scale(
-          // Rise-up scales from "far" (small) to "near"; classic is 0→1.
-          scale: widget.riseUp ? (0.4 + 0.6 * v) : v,
+          scale: widget.riseUp ? (0.4 + 0.6 * v) : (0.9 + 0.1 * v),
           child: Opacity(opacity: v, child: child),
         );
         if (!widget.riseUp) return scaled;
