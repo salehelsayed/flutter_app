@@ -240,6 +240,29 @@ void main() {
       expect(find.text('GIF'), findsOneWidget);
     });
 
+    testWidgets('BL-107 attachment badges and progress read at least 11 pt', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      await tester
+          .pumpWidget(
+            buildTestWidget(
+              attachments: [gifFile, testFiles.first],
+              invalidIndices: const {1},
+              invalidReasons: const {1: 'too_large'},
+              isProcessing: true,
+              processingProgress: 0.5,
+            ),
+          )
+          .timeout(deadline);
+
+      final fontSizes = [
+        for (final copy in ['GIF', 'Too large', 'Processing', '50%'])
+          tester.widget<Text>(find.text(copy)).style?.fontSize,
+      ];
+      expect(fontSizes, everyElement(greaterThanOrEqualTo(11)));
+    });
+
     testWidgets('JPEG thumbnail does not show a GIF badge', (tester) async {
       await tester.pumpWidget(
         buildTestWidget(attachments: [testFiles.first], onRemove: (_) {}),

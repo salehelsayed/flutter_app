@@ -390,6 +390,31 @@ void main() {
       expect(find.text('friend7'), findsOneWidget);
     });
 
+    testWidgets('BL-107 Orbit names read at 13 pt on rings and 12 on arcs', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      await tester
+          .pumpWidget(
+            expandable(
+              _friends(21),
+              startExpanded: true,
+              labelsVisible: true,
+              disableAnimations: true,
+            ),
+          )
+          .timeout(deadline);
+      final ring = tester.widget<Text>(find.text('friend0'));
+      final arc = tester.widget<Text>(find.text('friend13'));
+
+      expect([ring.style?.fontSize, arc.style?.fontSize], [13, 12]);
+      expect([ring.maxLines, arc.maxLines], [1, 1]);
+      expect([ring.overflow, arc.overflow], [
+        TextOverflow.ellipsis,
+        TextOverflow.ellipsis,
+      ]);
+    });
+
     // TC-205-08 — 205 item 5: double-tap labels are high-contrast (textPrimary
     // + a drop shadow), not the pale translucent textMuted with no scrim.
     testWidgets('TC-205-08 double-tap labels are high-contrast', (

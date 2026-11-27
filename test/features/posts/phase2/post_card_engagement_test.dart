@@ -110,6 +110,27 @@ void main() {
     expect(actions, ['heart', 'comment', 'pass']);
   });
 
+  testWidgets('BL-107 post expiry copy reads at least 11 pt', (tester) async {
+    const deadline = Duration(seconds: 3);
+    await tester
+        .pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: PostCard(
+                post: _post(),
+                nowProvider: () => DateTime.utc(2026, 3, 16, 10),
+              ),
+            ),
+          ),
+        )
+        .timeout(deadline);
+    final expiry = tester.widget<Text>(find.text('expires in 2h'));
+    expect(expiry.style?.fontSize, greaterThanOrEqualTo(11));
+  });
+
   testWidgets('shows inline delivery state and disables sending actions', (
     tester,
   ) async {
