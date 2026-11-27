@@ -3514,7 +3514,11 @@ void main() {
           expect(photoPreview, findsNothing);
           expect(voiceCard, findsNothing);
         }
-        await finishThoughtCase(tester).timeout(deadline);
+        await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+        // Retire the existing six-second fake-clock retry in bounded steps.
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(seconds: 1)).timeout(deadline);
+        }
       });
     }
 
