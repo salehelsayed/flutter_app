@@ -3005,6 +3005,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String chat_search_no_messages(String query) {
+    return 'No messages match “$query”';
+  }
+
+  @override
   String get chat_search_previous => 'Previous match';
 
   @override

@@ -3073,6 +3073,11 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String chat_search_no_messages(String query) {
+    return 'Keine Nachrichten passen zu „$query“';
+  }
+
+  @override
   String get chat_search_previous => 'Vorheriger Treffer';
 
   @override

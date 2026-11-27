@@ -1332,6 +1332,7 @@
   "chat_search_action": "بحث",
   "chat_search_hint": "بحث…",
   "chat_search_count": "{current} من {total}",
+  "chat_search_no_messages": "لا توجد رسائل تطابق «{query}»",
   "chat_search_previous": "النتيجة السابقة",
   "chat_search_next": "النتيجة التالية",
   "chat_search_close": "إغلاق البحث",

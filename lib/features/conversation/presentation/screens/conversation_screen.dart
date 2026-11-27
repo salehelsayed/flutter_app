@@ -966,11 +966,20 @@ class _ConversationScreenState extends State<ConversationScreen>
             constraints.maxHeight,
             _composerExtraHeight,
           );
+          final search = widget.search;
+          final isSearching = search?.isOpen ?? false;
+          final noMatchQuery = search != null && isSearching && search.noMatches
+              ? search.markedQuery
+              : null;
+          final allowIntroBanner =
+              !compactForKeyboard &&
+              !isSearching &&
+              View.of(context).viewInsets.bottom == 0;
           final content = Column(
             children: [
               // Header; the search bar stays up with the keyboard.
-              if (widget.search case final search? when search.isOpen)
-                ChatSearchBar(controller: search)
+              if (search != null && isSearching)
+                ChatSearchBar(controller: search, showNoMatchLabel: false)
               else if (!compactForKeyboard)
                 ConversationHeader(
                   contactPeerId: widget.contactPeerId,
@@ -1002,7 +1011,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                   callStartingMessage: widget.callStartingMessage,
                 ),
               // Intro banner above messages (when messages exist)
-              if (!compactForKeyboard)
+              if (allowIntroBanner)
                 AnimatedSwitcher(
                   duration: const Duration(milliseconds: 300),
                   child:
@@ -1040,9 +1049,21 @@ class _ConversationScreenState extends State<ConversationScreen>
               // Show loaded history directly. Crossfading the entire list here
               // overlaps the route slide and keeps the loading shell painting.
               Expanded(
-                child: widget.messages.isEmpty && _visibleCallEntries.isEmpty
-                    ? _buildEmptyOrLoadingState()
-                    : _buildMessageList(),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Visibility(
+                      visible: noMatchQuery == null,
+                      maintainState: true,
+                      child:
+                          widget.messages.isEmpty && _visibleCallEntries.isEmpty
+                          ? _buildEmptyOrLoadingState(allowIntroBanner)
+                          : _buildMessageList(),
+                    ),
+                    if (noMatchQuery != null)
+                      _buildSearchEmptyState(context, noMatchQuery),
+                  ],
+                ),
               ),
               if (widget.composerStateListenable == null)
                 _buildComposerSection(
@@ -1157,11 +1178,33 @@ class _ConversationScreenState extends State<ConversationScreen>
     );
   }
 
-  Widget _buildEmptyOrLoadingState() {
+  Widget _buildSearchEmptyState(BuildContext context, String query) {
+    return ColoredBox(
+      color: const Color(0xFF0B0D12),
+      child: Center(
+        child: SingleChildScrollView(
+          primary: false,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          child: Semantics(
+            liveRegion: true,
+            child: Text(
+              AppLocalizations.of(context)!.chat_search_no_messages(query),
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xFFB4BCC6), fontSize: 15),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyOrLoadingState(bool allowIntroBanner) {
     if (!widget.initialLoadDone) {
       return const _ConversationLoadingShell();
     }
-    if (widget.showIntroBanner && widget.onMakeIntroductions != null) {
+    if (allowIntroBanner &&
+        widget.showIntroBanner &&
+        widget.onMakeIntroductions != null) {
       return Column(
         key: const ValueKey('empty-with-banner'),
         children: [

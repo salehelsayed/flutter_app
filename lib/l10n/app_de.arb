@@ -1332,6 +1332,7 @@
   "chat_search_action": "Suchen",
   "chat_search_hint": "Suchen…",
   "chat_search_count": "{current} von {total}",
+  "chat_search_no_messages": "Keine Nachrichten passen zu „{query}“",
   "chat_search_previous": "Vorheriger Treffer",
   "chat_search_next": "Nächster Treffer",
   "chat_search_close": "Suche schließen",

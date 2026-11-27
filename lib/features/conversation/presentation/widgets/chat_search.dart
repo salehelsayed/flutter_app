@@ -151,9 +151,14 @@ class ChatSearchController extends ChangeNotifier {
 
 /// The chat header while searching: back, the field, "2 of 7" and up / down.
 class ChatSearchBar extends StatefulWidget {
-  const ChatSearchBar({super.key, required this.controller});
+  const ChatSearchBar({
+    super.key,
+    required this.controller,
+    this.showNoMatchLabel = true,
+  });
 
   final ChatSearchController controller;
+  final bool showNoMatchLabel;
 
   @override
   State<ChatSearchBar> createState() => _ChatSearchBarState();
@@ -200,7 +205,7 @@ class _ChatSearchBarState extends State<ChatSearchBar> {
               final search = widget.controller;
               final count = search.hits.isNotEmpty
                   ? l10n.chat_search_count(search.index + 1, search.hits.length)
-                  : search.noMatches
+                  : search.noMatches && widget.showNoMatchLabel
                   ? l10n.share_no_matches
                   : null;
               return Row(
@@ -268,8 +273,7 @@ class _ChatSearchBarState extends State<ChatSearchBar> {
                         ),
                       ),
                     ),
-                  // With nothing to step through, the arrows give their room to
-                  // "No matches found".
+                  // Keep the arrows out of the way when there are no matches.
                   if (!search.noMatches) ...[
                     IconButton(
                       tooltip: l10n.chat_search_previous,
