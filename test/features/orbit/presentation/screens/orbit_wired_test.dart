@@ -2103,6 +2103,57 @@ void main() {
       );
     }
 
+    testWidgets('P7 Orbit seats stay still beneath the Thought composer', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      setLargeTestSurface(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts
+          .savePost(thought('covered-orbit', text: 'Afternoon walk'))
+          .timeout(deadline);
+      await tester
+          .pumpWidget(
+            buildOrbitWired(
+              postRepository: posts,
+              thoughtNowProvider: () => thoughtNow,
+            ),
+          )
+          .timeout(deadline);
+      await pumpOrbitFrames(tester, count: 20).timeout(deadline);
+
+      final avatar = find.byKey(
+        const ValueKey('orbit-node-0'),
+        skipOffstage: false,
+      );
+      final note = find.text('Afternoon walk', skipOffstage: false);
+      expect(avatar, findsOneWidget);
+      expect(note, findsOneWidget);
+      final avatarBefore = tester.getRect(avatar);
+      final noteBefore = tester.getRect(note);
+
+      await tester
+          .tap(find.byKey(const ValueKey('orbit-compose-thought')))
+          .timeout(deadline);
+      final composer = find.byType(ComposePostSheet);
+      for (final milliseconds in [0, 100, 400, 900, 1300]) {
+        await tester
+            .pump(Duration(milliseconds: milliseconds))
+            .timeout(deadline);
+        expect(composer, findsOneWidget);
+        expect(tester.getRect(avatar), avatarBefore);
+        expect(tester.getRect(note), noteBefore);
+      }
+
+      await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+      for (var i = 0; i < 3; i++) {
+        await tester.pump(const Duration(seconds: 2)).timeout(deadline);
+      }
+    });
+
     testWidgets(
       'own-node plus shares with every current active unblocked friend',
       (tester) async {
