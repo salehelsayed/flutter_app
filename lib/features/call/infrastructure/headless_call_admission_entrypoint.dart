@@ -264,6 +264,28 @@ Future<void> runAndroidHeadlessCallAdmission(
   }
 
   try {
+    final cause = report.diagnosticCause;
+    final diagnosticCause =
+        cause != null &&
+            (callDiagnosticSchemaV1['reason'] as List).contains(cause)
+        ? cause
+        : null;
+    try {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CALL_HEADLESS_ADMISSION_RESULT',
+        details: <String, Object?>{
+          'mode': invocation.mode.wireName,
+          'disposition': report.disposition.wireName,
+          'diagnosticCause': diagnosticCause,
+          'requiredPersistenceComplete': report.requiredPersistenceComplete,
+          'databaseClosed': report.databaseClosed,
+          'leaseReleased': report.leaseReleased,
+        },
+      );
+    } catch (_) {
+      // Diagnostics cannot change admission or its cleanup path.
+    }
     await channel.send(
       method: 'complete',
       payload: <String, Object?>{
@@ -279,11 +301,7 @@ Future<void> runAndroidHeadlessCallAdmission(
             report.leaseReleased &&
             report.display != null)
           'display': report.display!.toMap(),
-        if (report.diagnosticCause != null &&
-            (callDiagnosticSchemaV1['reason'] as List).contains(
-              report.diagnosticCause,
-            ))
-          'diagnosticCause': report.diagnosticCause,
+        if (diagnosticCause != null) 'diagnosticCause': diagnosticCause,
       },
     );
   } finally {

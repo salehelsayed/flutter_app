@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/app/bootstrap/production_headless_call_admission.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
@@ -802,6 +803,14 @@ void main() {
   test(
     'every non-terminal verdict leaves the rows for foreground adoption',
     () async {
+      final refusals = <Object?>[];
+      debugSetFlowEventSink((payload) {
+        if (payload['event'] == 'CALL_HEADLESS_ADMISSION_ROW_REFUSED') {
+          refusals.add(payload['details']);
+          throw StateError('diagnostic sink failed');
+        }
+      });
+      addTearDown(() => debugSetFlowEventSink(null));
       final admittedMailbox = _Mailbox(<CallMailboxEvent>[_event()]);
       final admitted = MailboxProductionHeadlessCallAdmissionSession(
         mailboxClient: admittedMailbox,
@@ -809,7 +818,7 @@ void main() {
         closeResources: () async => _Session.safeCleanup,
       );
       expect(
-        await admitted.evaluate(invocation),
+        await admitted.evaluate(invocation).timeout(const Duration(seconds: 3)),
         HeadlessCallAdmissionDisposition.admitted,
       );
 
@@ -822,14 +831,16 @@ void main() {
         closeResources: () async => _Session.safeCleanup,
       );
       expect(
-        await stale.evaluate(
-          HeadlessCallAdmissionInvocation(
-            nonce: invocation.nonce,
-            callId: invocation.callId,
-            wakeHandle: invocation.wakeHandle,
-            expiresAtMs: 1_800_000_051_000,
-          ),
-        ),
+        await stale
+            .evaluate(
+              HeadlessCallAdmissionInvocation(
+                nonce: invocation.nonce,
+                callId: invocation.callId,
+                wakeHandle: invocation.wakeHandle,
+                expiresAtMs: 1_800_000_051_000,
+              ),
+            )
+            .timeout(const Duration(seconds: 3)),
         HeadlessCallAdmissionDisposition.emptyOrAlreadyAcked,
       );
 
@@ -839,12 +850,13 @@ void main() {
         authenticateEvent: ({required invocation, required event}) async {
           throw const IncomingCallPrePresentationAdmissionException(
             IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+            gate: IncomingCallPrePresentationAdmissionGate.mailboxBinding,
           );
         },
         closeResources: () async => _Session.safeCleanup,
       );
       expect(
-        await rejected.evaluate(invocation),
+        await rejected.evaluate(invocation).timeout(const Duration(seconds: 3)),
         HeadlessCallAdmissionDisposition.permanentReject,
       );
 
@@ -854,14 +866,22 @@ void main() {
         authenticateEvent: ({required invocation, required event}) async {
           throw const IncomingCallPrePresentationAdmissionException(
             IncomingCallPrePresentationAdmissionFailureCode.deferred,
+            gate: IncomingCallPrePresentationAdmissionGate.endpointUnavailable,
           );
         },
         closeResources: () async => _Session.safeCleanup,
       );
       expect(
-        await deferred.evaluate(invocation),
+        await deferred.evaluate(invocation).timeout(const Duration(seconds: 3)),
         HeadlessCallAdmissionDisposition.deferred,
       );
+      expect(refusals, [
+        {
+          'outcome': 'permanentReject',
+          'reasonCode': 'mailbox_binding_mismatch',
+        },
+        {'outcome': 'deferred', 'reasonCode': 'endpoint_unavailable'},
+      ]);
 
       for (final mailbox in <_Mailbox>[
         admittedMailbox,

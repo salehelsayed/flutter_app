@@ -371,6 +371,18 @@ final class MailboxProductionHeadlessCallAdmissionSession
             event: event,
           );
         } on IncomingCallPrePresentationAdmissionException catch (error) {
+          try {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CALL_HEADLESS_ADMISSION_ROW_REFUSED',
+              details: <String, Object?>{
+                'outcome': error.code.name,
+                'reasonCode': error.reasonCode,
+              },
+            );
+          } catch (_) {
+            // Diagnostics cannot change admission or cleanup behavior.
+          }
           switch (error.code) {
             case IncomingCallPrePresentationAdmissionFailureCode.deferred:
               deferredRows = true;

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -227,8 +228,24 @@ void main() {
     'closed diagnostic cause crosses completion without changing authority fields',
     () async {
       final channel = _FakeChannel();
+      final results = <Object?>[];
+      var sendsAtResult = -1;
+      debugSetFlowEventSink((payload) {
+        if (payload['event'] == 'CALL_HEADLESS_ADMISSION_RESULT') {
+          results.add(payload['details']);
+          sendsAtResult = channel.methods.length;
+          throw StateError('diagnostic sink failed');
+        }
+      });
+      addTearDown(() => debugSetFlowEventSink(null));
       await runAndroidHeadlessCallAdmission(
-        const <String>[nonce, callId, wakeHandle, '$expiresAtMs'],
+        const <String>[
+          nonce,
+          callId,
+          wakeHandle,
+          '$expiresAtMs',
+          'decline_reply',
+        ],
         resultChannel: channel,
         runAdmission: ({required invocation, required isStopRequested}) async =>
             const HeadlessCallAdmissionRunReport(
@@ -239,7 +256,16 @@ void main() {
               diagnosticCause: 'graph_not_owner',
             ),
         emergencyShutdown: () async => throw StateError('unused'),
-      );
+      ).timeout(const Duration(seconds: 3));
+      expect(sendsAtResult, 0);
+      expect(results.single, const <String, Object?>{
+        'mode': 'decline_reply',
+        'disposition': 'deferred',
+        'diagnosticCause': 'graph_not_owner',
+        'requiredPersistenceComplete': false,
+        'databaseClosed': true,
+        'leaseReleased': true,
+      });
       expect(channel.payloads.single, const <String, Object?>{
         'nonce': nonce,
         'callId': callId,
@@ -257,6 +283,13 @@ void main() {
   test(
     'private or absent diagnostic cause retains the legacy completion shape',
     () async {
+      final results = <Object?>[];
+      debugSetFlowEventSink((payload) {
+        if (payload['event'] == 'CALL_HEADLESS_ADMISSION_RESULT') {
+          results.add(payload['details']);
+        }
+      });
+      addTearDown(() => debugSetFlowEventSink(null));
       for (final cause in <String?>[null, callId, 'private error text']) {
         final channel = _FakeChannel();
         await runAndroidHeadlessCallAdmission(
@@ -272,7 +305,16 @@ void main() {
                     diagnosticCause: cause,
                   ),
           emergencyShutdown: () async => throw StateError('unused'),
-        );
+        ).timeout(const Duration(seconds: 3));
+        expect(results.single, const <String, Object?>{
+          'mode': 'admission',
+          'disposition': 'deferred',
+          'diagnosticCause': null,
+          'requiredPersistenceComplete': false,
+          'databaseClosed': true,
+          'leaseReleased': true,
+        });
+        results.clear();
         expect(channel.payloads.single.containsKey('diagnosticCause'), isFalse);
         expect(channel.payloads.single.length, 8);
         expect(channel.payloads.single['requiredPersistenceComplete'], isFalse);
