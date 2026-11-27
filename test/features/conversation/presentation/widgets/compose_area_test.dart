@@ -77,6 +77,85 @@ void main() {
     );
   }
 
+  for (final (language, width, draft) in [
+    ('en', 320.0, 'A\nB'),
+    ('de', 375.0, 'Ä\nB'),
+    ('ar', 390.0, 'أ\nب'),
+  ]) {
+    testWidgets(
+      'AX5 layout keeps two draft lines and chat controls in $language',
+      (tester) async {
+        const deadline = Duration(seconds: 3);
+        final semantics = tester.ensureSemantics();
+        addTearDown(semantics.dispose);
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = Size(width, 568);
+        tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+        addTearDown(tester.view.reset);
+        var attachments = 0;
+        var stickers = 0;
+        final sent = <String>[];
+
+        await tester
+            .pumpWidget(
+              MaterialApp(
+                locale: Locale(language),
+                localizationsDelegates: AppLocalizations.localizationsDelegates,
+                supportedLocales: AppLocalizations.supportedLocales,
+                builder: (context, child) => MediaQuery(
+                  data: MediaQuery.of(context)
+                      .copyWith(textScaler: const TextScaler.linear(3.1)),
+                  child: child!,
+                ),
+                home: Scaffold(
+                  body: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: ComposeArea(
+                      compact: true,
+                      initialText: draft,
+                      onAttach: () => attachments++,
+                      onStickerToggle: () => stickers++,
+                      onSend: sent.add,
+                    ),
+                  ),
+                ),
+              ),
+            )
+            .timeout(deadline);
+        await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
+
+        expect(tester.takeException(), isNull);
+        final editable = tester.renderObject<RenderEditable>(
+          find.byType(EditableText),
+        );
+        expect(
+          editable.size.height,
+          greaterThanOrEqualTo(2 * editable.preferredLineHeight - 1),
+        );
+        expect(
+          editable.localToGlobal(Offset(0, editable.size.height)).dy,
+          lessThanOrEqualTo(268),
+        );
+
+        final l10n = AppLocalizations.of(
+          tester.element(find.byType(ComposeArea)),
+        )!;
+        final attach = find.byKey(const ValueKey('composer-attach-button'));
+        final sticker = find.byTooltip(l10n.stickers_title);
+        final send = find.bySemanticsIdentifier('chat_send');
+        for (final button in [attach, sticker, send]) {
+          final size = tester.getSize(button);
+          expect(size.width, greaterThanOrEqualTo(44));
+          expect(size.height, greaterThanOrEqualTo(44));
+        }
+        await tester.tap(attach).timeout(deadline);
+        await tester.tap(sticker).timeout(deadline);
+        await tester.tap(send).timeout(deadline);
+        expect((attachments, stickers, sent.single), (1, 1, draft));
+      },
+    );
+  }
+
   testWidgets('A02 recording phases name the actual action once', (
     tester,
   ) async {

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
@@ -13,6 +13,8 @@ void main() {
     VoidCallback? onCall,
     VoidCallback? onSearch,
     Locale locale = const Locale('en'),
+    String contactUsername = 'Alice',
+    TextScaler? textScaler,
     bool showCallAction = false,
     bool callActionEnabled = true,
     bool callActionInFlight = false,
@@ -22,6 +24,12 @@ void main() {
   }) {
     return MaterialApp(
       locale: locale,
+      builder: textScaler == null
+          ? null
+          : (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+              child: child!,
+            ),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Theme(
@@ -29,7 +37,7 @@ void main() {
         child: Scaffold(
           body: ConversationHeader(
             contactPeerId: '12D3KooWTestPeerId1234567890',
-            contactUsername: 'Alice',
+            contactUsername: contactUsername,
             onBack: onBack ?? () {},
             onOverflow: onOverflow,
             onCall: onCall,
@@ -41,6 +49,53 @@ void main() {
           ),
         ),
       ),
+    );
+  }
+
+  for (final (language, name) in [
+    ('en', 'Riverside Friends'),
+    ('de', 'Freunde Berlin'),
+    ('ar', 'أصدقاء الموصل'),
+  ]) {
+    testWidgets(
+      'AX5 layout shows the chat name above its actions in $language',
+      (tester) async {
+        const deadline = Duration(seconds: 3);
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(320, 700);
+        addTearDown(tester.view.reset);
+        var searches = 0;
+        await tester
+            .pumpWidget(
+              buildTestWidget(
+                locale: Locale(language),
+                contactUsername: name,
+                textScaler: const TextScaler.linear(3.1),
+                onOverflow: () {},
+                onCall: () {},
+                showCallAction: true,
+                onSearch: () => searches++,
+              ),
+            )
+            .timeout(deadline);
+
+        final header = tester.element(find.byType(ConversationHeader));
+        final l10n = AppLocalizations.of(header)!;
+        final contactName = find.text(name);
+        final search = find.byTooltip(l10n.chat_search_action);
+        expect(
+          tester.getTopLeft(search).dy,
+          greaterThanOrEqualTo(tester.getBottomLeft(contactName).dy),
+        );
+        final paragraph = tester.renderObject<RenderParagraph>(
+          find.descendant(of: contactName, matching: find.byType(RichText)),
+        );
+        expect(paragraph.didExceedMaxLines, isFalse);
+        expect(tester.getSize(search).shortestSide, greaterThanOrEqualTo(44));
+        await tester.tap(search).timeout(deadline);
+        expect(searches, 1);
+        expect(tester.takeException(), isNull);
+      },
     );
   }
 

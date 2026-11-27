@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_tags_use_case.dart';
 import 'package:flutter_app/features/posts/application/post_surface_hydrator.dart';
@@ -97,13 +98,14 @@ YouThought _thought({
 );
 
 YouPageData _data({
+  String username = 'Saleh',
   YouThought? thought,
   List<YouThought> past = const [],
   String? tag,
   int tagCount = 0,
   List<OwnThoughtTag> tags = const [],
 }) => YouPageData(
-  username: 'Saleh',
+  username: username,
   avatarBytes: null,
   friendCount: 41,
   thought: thought,
@@ -179,15 +181,18 @@ void main() {
     Future<YouPageData> Function(int historyLimit, String? tag)? tagged,
     DateTime Function()? now,
     Stream<String> replies = const Stream.empty(),
+    Locale locale = const Locale('en'),
+    TextScaler? textScaler,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
         // Orbit's background moves; held still here so frames settle.
         builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(context).copyWith(disableAnimations: true),
+          data: MediaQuery.of(context)
+              .copyWith(disableAnimations: true, textScaler: textScaler),
           child: child!,
         ),
-        locale: const Locale('en'),
+        locale: locale,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: YouPageScreen(
@@ -204,6 +209,37 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+  }
+
+  for (final (language, width) in [
+    ('en', 320.0),
+    ('de', 375.0),
+    ('ar', 390.0),
+  ]) {
+    testWidgets('AX5 layout shows the full You username in $language', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      const username = 'abcdefghijklmnopqrstuvwxyz0123';
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = Size(width, 844);
+      addTearDown(tester.view.reset);
+      await pumpPage(
+        tester,
+        () async => _data(username: username),
+        locale: Locale(language),
+        textScaler: const TextScaler.linear(3.1),
+      ).timeout(deadline);
+
+      final label = find.textContaining('@$username');
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.descendant(of: label, matching: find.byType(RichText)),
+      );
+      expect(paragraph.didExceedMaxLines, isFalse);
+      expect(tester.getTopLeft(label).dx, greaterThanOrEqualTo(0));
+      expect(tester.getTopRight(label).dx, lessThanOrEqualTo(width));
+      expect(tester.takeException(), isNull);
+    });
   }
 
   testWidgets('header shows the handle and the friend count', (tester) async {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -13,6 +14,8 @@ import 'package:flutter_app/features/settings/presentation/widgets/settings_prof
 void main() {
   Widget wrap({
     String username = 'Alice',
+    Locale locale = const Locale('en'),
+    TextScaler? textScaler,
     String? peerId,
     String? mnemonic,
     bool isPeerIdCopied = false,
@@ -36,7 +39,13 @@ void main() {
     bool showNavigationBar = true,
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
+      builder: textScaler == null
+          ? null
+          : (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+              child: child!,
+            ),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
@@ -70,6 +79,57 @@ void main() {
 
   const twelveWords =
       'one two three four five six seven eight nine ten eleven twelve';
+
+  for (final (language, width) in [
+    ('en', 320.0),
+    ('de', 375.0),
+    ('ar', 390.0),
+  ]) {
+    testWidgets('AX5 layout shows the full Settings username in $language', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      const username = 'abcdefghijklmnopqrstuvwxyz0123';
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = Size(width, 844);
+      addTearDown(tester.view.reset);
+      await tester
+          .pumpWidget(
+            wrap(
+              username: username,
+              locale: Locale(language),
+              textScaler: const TextScaler.linear(3.1),
+              showNavigationBar: false,
+            ),
+          )
+          .timeout(deadline);
+
+      final profile = find.byType(SettingsProfileSection);
+      final label = find.descendant(
+        of: profile,
+        matching: find.textContaining('@$username'),
+      );
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.descendant(of: label, matching: find.byType(RichText)),
+      );
+      expect(paragraph.didExceedMaxLines, isFalse);
+      final edit = find.descendant(
+        of: profile,
+        matching: find.byIcon(Icons.edit),
+      );
+      expect(
+        tester.getTopLeft(edit).dy,
+        greaterThanOrEqualTo(tester.getBottomLeft(label).dy),
+      );
+      await tester.tap(edit).timeout(deadline);
+      await tester.pump().timeout(deadline);
+      expect(
+        find.descendant(of: profile, matching: find.byType(TextField)),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('renders "Settings" title', (tester) async {
     await tester.pumpWidget(

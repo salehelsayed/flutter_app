@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
@@ -41,8 +42,15 @@ void main() {
     bool replacesCurrentThought = false,
     bool photoWithVoice = false,
     ThemeData? theme,
+    TextScaler? textScaler,
   }) => MaterialApp(
     theme: theme,
+    builder: textScaler == null
+        ? null
+        : (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+            child: child!,
+          ),
     locale: locale,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
@@ -62,6 +70,60 @@ void main() {
       ),
     ),
   );
+
+  for (final language in ['en', 'de', 'ar']) {
+    testWidgets(
+      'AX5 layout shows Thought actions above its full title in $language',
+      (tester) async {
+        const deadline = Duration(seconds: 3);
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(320, 844);
+        addTearDown(tester.view.reset);
+        await tester
+            .pumpWidget(
+              scene(
+                locale: Locale(language),
+                textScaler: const TextScaler.linear(3.1),
+                submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
+              ),
+            )
+            .timeout(deadline);
+        await tester.pump().timeout(deadline);
+
+        final sheet = tester.element(find.byType(ComposePostSheet));
+        final l10n = AppLocalizations.of(sheet)!;
+        final cancel = find.byKey(const ValueKey('thought-composer-cancel'));
+        final share = find.byKey(const ValueKey('thought-composer-share'));
+        final title = find.text(l10n.thought_compose_header);
+        final cancelRect = tester.getRect(cancel);
+        final shareRect = tester.getRect(share);
+        expect(cancelRect.center.dy, closeTo(shareRect.center.dy, 1));
+        expect(
+          tester.getTopLeft(title).dy,
+          greaterThanOrEqualTo(math.max(cancelRect.bottom, shareRect.bottom)),
+        );
+        expect(cancelRect.center.dx < shareRect.center.dx, language != 'ar');
+        for (final rect in [cancelRect, shareRect]) {
+          expect(rect.width, greaterThanOrEqualTo(44));
+          expect(rect.height, greaterThanOrEqualTo(44));
+        }
+        for (final label in [
+          find.descendant(of: cancel, matching: find.text(l10n.btn_cancel)),
+          find.descendant(
+            of: share,
+            matching: find.text(l10n.thought_compose_share),
+          ),
+          title,
+        ]) {
+          final rendered = tester.renderObject<RenderParagraph>(
+            find.descendant(of: label, matching: find.byType(RichText)),
+          );
+          expect(rendered.didExceedMaxLines, isFalse);
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   /// The sheet scrolls; a control below the fold is scrolled to, then tapped.
   Future<void> tapVisible(WidgetTester tester, Finder finder) async {
