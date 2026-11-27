@@ -124,8 +124,11 @@ void main() {
   /// The voice card's player finishes loading (or failing to) and lets go of
   /// its timers once the sheet is gone.
   Future<void> settlePlayer(WidgetTester tester) async {
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(seconds: 5));
+    const deadline = Duration(seconds: 3);
+    const drain = Duration(milliseconds: 2500);
+    await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+    await tester.pump(drain).timeout(deadline);
+    await tester.pump(drain).timeout(deadline);
   }
 
   ElevatedButton share(WidgetTester tester) =>
@@ -818,7 +821,7 @@ void main() {
     await until(tester, () => submitted != null).timeout(deadline);
     expect(submitted!.mediaDrafts.map((draft) => draft.kind), ['image', 'voice']);
     expect(submitted!.mediaDrafts.last, same(voice));
-    await settlePlayer(tester).timeout(deadline);
+    await settlePlayer(tester);
   });
 
   testWidgets('BL95 a photo picked onto a voice note keeps both', (
