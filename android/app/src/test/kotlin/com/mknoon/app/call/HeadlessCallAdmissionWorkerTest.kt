@@ -759,6 +759,65 @@ class HeadlessCallAdmissionWorkerTest {
     }
 
     @Test
+    fun `a clamped native call schedules decline with the original authenticated expiry`() {
+        val wireExpiresAtMs = NOW_MS + 13_400L + 40_000L
+        val enqueuer = RecordingHeadlessCallAdmissionEnqueuer()
+        val scheduler = HeadlessCallAdmissionWorkScheduler(context, enqueuer, nowMs = { NOW_MS })
+        val backend = object : PendingNativeCallBackend {
+            private var committed: ByteArray? = null
+
+            override fun read(): ByteArray? = committed?.copyOf()
+
+            override fun replace(bytes: ByteArray?): Boolean {
+                committed = bytes?.copyOf()
+                return true
+            }
+        }
+        val store = PendingNativeCallStore(backend, nowMs = { NOW_MS })
+        val controller = MknoonCallLifecycleController(
+            store = store,
+            platform = LifecycleFakePlatform(),
+            eventSink = LifecycleFakeEventSink(),
+            capabilityEnabled = { true },
+            recordAudioPermissionGranted = { true },
+            nowMs = { NOW_MS },
+            onDeclineWithoutOwner = scheduler::enqueueDeclineReply,
+        )
+
+        assertTrue(
+            presentAuthenticatedCall(
+                callHandle = CALL_ID,
+                expiresAtMs = wireExpiresAtMs,
+                observedNowMs = NOW_MS,
+                capabilityEnabled = true,
+                handleGrammar = Regex("^[0-9a-f-]{36}$"),
+                wakeHandle = { NATIVE_WAKE_HANDLE },
+                present = { controller.present(it) },
+            ),
+        )
+        val presented = requireNotNull(store.snapshot())
+        assertEquals(EXPIRES_AT_MS, presented.expiresAtMs)
+        assertTrue(presented.events.any { it.type == PendingNativeCallEventType.PRESENTED })
+
+        val decline = PendingNativeCallEventType.DECLINE_REQUESTED
+        assertFalse(controller.terminate(UUID.fromString(OTHER_CALL_ID), decline))
+        assertTrue(enqueuer.requests.isEmpty())
+        assertTrue(controller.terminate(UUID.fromString(CALL_ID), decline))
+
+        val input = enqueuer.requests.single().request.workSpec.input
+        assertEquals(CALL_ID, input.getString(HeadlessCallAdmissionWorkScheduler.INPUT_CALL_ID))
+        assertEquals(NATIVE_WAKE_HANDLE, input.getString(HeadlessCallAdmissionWorkScheduler.INPUT_WAKE_HANDLE))
+        assertEquals(
+            HeadlessCallAdmissionMode.DECLINE_REPLY.wireName,
+            input.getString(HeadlessCallAdmissionWorkScheduler.INPUT_MODE),
+        )
+        assertEquals(
+            wireExpiresAtMs,
+            input.getLong(HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS, -1L),
+        )
+    }
+
+    @Test
     fun `scheduler creates one opaque unique expedited connected job for exact wake identity`() {
         val enqueuer = RecordingHeadlessCallAdmissionEnqueuer()
         val scheduler = HeadlessCallAdmissionWorkScheduler(
