@@ -47,6 +47,38 @@ void main() {
       expect(currentOpacity(), 1);
     });
 
+    testWidgets('classic avatar only accepts taps once visible', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      var taps = 0;
+      await tester
+          .pumpWidget(
+            wrap(
+              OrbitalAvatar(
+                peerId: 'peer-stagger',
+                size: 38,
+                globalIndex: 0,
+                entranceDelayMs: 100,
+                onTap: () => taps++,
+                child: const SizedBox(),
+              ),
+            ),
+          )
+          .timeout(deadline);
+
+      final target = tester.getCenter(find.byType(GestureDetector));
+      await tester.tapAt(target).timeout(deadline);
+      final tapsWhileInvisible = taps;
+      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 50)).timeout(deadline);
+      await tester.tapAt(target).timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 150)).timeout(deadline);
+
+      expect(tapsWhileInvisible, 0);
+      expect(taps, 1);
+    });
+
     testWidgets('renders UserAvatar with given size', (tester) async {
       await tester.pumpWidget(
         wrap(const OrbitalAvatar(peerId: 'peer-123', size: 38, globalIndex: 0)),
