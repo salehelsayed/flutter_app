@@ -131,6 +131,14 @@ void main() {
   AppLocalizations labels(WidgetTester tester) =>
       AppLocalizations.of(tester.element(find.byType(ConversationWired)))!;
 
+  Finder emptySearchSurface(Finder label) => find.ancestor(
+    of: label,
+    matching: find.byWidgetPredicate(
+      (widget) =>
+          widget is ColoredBox && widget.color == const Color(0xFF0B0D12),
+    ),
+  );
+
   group('chat search and introduction promo', () {
     const deadline = Duration(seconds: 3);
     for (final (language, width, query, emptyLabel) in [
@@ -170,24 +178,34 @@ void main() {
         expect(empty, findsOneWidget);
         final text = tester.widget<Text>(empty);
         expect(text.style?.color, const Color(0xFFB4BCC6));
-        final searchSurface = find.ancestor(
-          of: empty,
-          matching: find.byWidgetPredicate(
-            (widget) =>
-                widget is ColoredBox && widget.color == const Color(0xFF0B0D12),
-          ),
-        );
+        final searchSurface = emptySearchSurface(empty);
         expect(searchSurface, findsOneWidget);
-        expect(
-          tester.getCenter(empty).dy,
-          closeTo(tester.getCenter(searchSurface).dy, 0.5),
-        );
+        final bounds = tester.getRect(searchSurface);
+        expect(bounds.top, greaterThanOrEqualTo(tester.getBottomLeft(bar).dy));
+        expect(bounds.bottom, lessThan(844 - 320));
         expect(tester.getCenter(empty).dx, closeTo(width / 2, 0.5));
         expect(
           tester.getTopLeft(empty).dy,
-          greaterThan(tester.getBottomLeft(bar).dy),
+          inInclusiveRange(bounds.top, bounds.bottom),
         );
-        expect(tester.getBottomLeft(empty).dy, lessThan(844 - 320));
+        final scrollable = find.descendant(
+          of: searchSurface,
+          matching: find.byType(Scrollable),
+        );
+        final position = tester.state<ScrollableState>(scrollable).position;
+        if (position.maxScrollExtent == 0) {
+          expect(tester.getCenter(empty).dy, closeTo(bounds.center.dy, 0.5));
+        } else {
+          await tester
+              .drag(scrollable, Offset(0, -position.maxScrollExtent - 80))
+              .timeout(deadline);
+          await settle(tester);
+          expect(position.pixels, greaterThan(0));
+        }
+        expect(
+          tester.getBottomLeft(empty).dy,
+          inInclusiveRange(bounds.top, bounds.bottom),
+        );
         expect(
           Directionality.of(tester.element(empty)),
           language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
@@ -238,6 +256,10 @@ void main() {
       await settle(tester);
       final empty = find.text('No messages match “meteor”');
       expect(empty, findsOneWidget);
+      expect(
+        tester.getCenter(empty).dy,
+        closeTo(tester.getCenter(emptySearchSurface(empty)).dy, 0.5),
+      );
       await tester.enterText(searchField, 'Dahab').timeout(deadline);
       await settle(tester);
       expect(empty, findsNothing);
