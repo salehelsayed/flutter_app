@@ -378,6 +378,15 @@ class OrbitalVisualization extends StatelessWidget {
     final densityScale = v2 && v2Options.densityScale
         ? orbitalQuietV2ScaleForCount(items.length)
         : 1.0;
+    final overflow = layout.badge;
+    final overflowSize = onBadgeTap == null ? 28.0 : 44.0;
+    final overflowTarget = overflow == null
+        ? null
+        : Rect.fromCenter(
+            center: Offset(overflow.dx, overflow.dy),
+            width: overflowSize,
+            height: overflowSize,
+          );
 
     final placements = <int, OrbitThoughtPlacement>{};
     final avatarTargets = <int, Rect>{};
@@ -404,8 +413,6 @@ class OrbitalVisualization extends StatelessWidget {
           final byTime = right.compareTo(left);
           return byTime == 0 ? a.key.compareTo(b.key) : byTime;
         });
-      final overflow = layout.badge;
-      final overflowSize = onBadgeTap == null ? 28.0 : 44.0;
       placements.addAll(
         layoutOrbitThoughts(
           canvas: Rect.fromLTWH(-cx, -cy, boxWidth, boxHeight).deflate(6),
@@ -425,12 +432,7 @@ class OrbitalVisualization extends StatelessWidget {
           otherObstacles: [
             if (selfPeerId != null && onComposeThought != null)
               const Rect.fromLTWH(4, 4, 44, 44),
-            if (overflow != null)
-              Rect.fromCenter(
-                center: Offset(overflow.dx, overflow.dy),
-                width: overflowSize,
-                height: overflowSize,
-              ),
+            if (overflowTarget != null) overflowTarget,
           ],
         ),
       );
@@ -566,6 +568,7 @@ class OrbitalVisualization extends StatelessWidget {
       );
     }
 
+    final arcBadges = <Widget>[];
     // Seats — rings always; arcs only when expanded.
     for (final seat in layout.seats) {
       final isArc = seat.kind == OrbitSeatKind.arc;
@@ -672,14 +675,23 @@ class OrbitalVisualization extends StatelessWidget {
       if (arcNote != null) {
         final tap = noteTap(arcNote);
         final target = Rect.fromCenter(
-          center: Offset(cx + seat.dx, cy + seat.dy),
+          center: Offset(seat.dx, seat.dy),
           width: tapTargetSize,
           height: tapTargetSize,
         );
-        children.add(
+        final preferred = orbitThoughtBadgeRect(target, target, mirrored);
+        final coversFace = layout.seats.any(
+          (other) => preferred.contains(Offset(other.dx, other.dy)),
+        );
+        final underOverflow =
+            overflowTarget?.contains(preferred.center) ?? false;
+        final badgeRect = coversFace || underOverflow
+            ? orbitThoughtBadgeRect(target, target, !mirrored)
+            : preferred;
+        arcBadges.add(
           Positioned.fromRect(
             key: ValueKey('orbit-thought-badge-${seat.index}'),
-            rect: orbitThoughtBadgeRect(target, target, mirrored),
+            rect: badgeRect.shift(Offset(cx, cy)),
             child: IgnorePointer(
               ignoring: tap == null,
               child: Opacity(
@@ -691,22 +703,22 @@ class OrbitalVisualization extends StatelessWidget {
         );
       }
     }
+    children.addAll(arcBadges);
 
     // Overflow badge (present whenever the population overflows). Its box is
     // 44px when interactive (−8px inset around the 28px visual) else 28px.
-    if (layout.badge != null) {
-      final badge = layout.badge!;
-      final badgeHalf = onBadgeTap != null ? 22.0 : 14.0;
+    if (overflow != null) {
+      final target = overflowTarget!;
       children.add(
         Positioned(
           // 201 INV-201-2: the single badge keeps a stable slot key so node/label
           // insertions before it (label toggle, arc expand/collapse) never
           // re-inflate it (which replayed its 1.5s entrance / blanked it).
           key: const ValueKey('orbit-overflow-badge-seat'),
-          left: cx + badge.dx - badgeHalf,
-          top: cy + badge.dy - badgeHalf,
+          left: cx + target.left,
+          top: cy + target.top,
           child: OverflowBadge(
-            count: badge.overflowCount,
+            count: overflow.overflowCount,
             hiddenThoughtCount: arcNotes.length,
             expanded: overflowExpanded,
             onTap: onBadgeTap,
