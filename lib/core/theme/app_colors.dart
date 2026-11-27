@@ -10,6 +10,7 @@ class AppColors {
   // Primary Accent (Green)
   static const Color primaryAccent = Color(0xFF1DB954);
   static const Color secondaryAccent = Color(0xFF1ED760);
+  static const Color callAction = Color(0xFF1A7F37);
 
   // Text
   static const Color textPrimary = Color(0xFFFFFFFF);

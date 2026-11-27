@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -126,14 +127,16 @@ class CallControls extends StatelessWidget {
                       : Icons.mic_none_rounded,
                   backgroundColor: isMuteAvailable
                       ? (isMuted
-                            ? (_videoStyle ? Colors.white : colors.accent)
+                            ? (_videoStyle
+                                  ? Colors.white
+                                  : AppColors.callAction)
                             : colors.surfaceRaised)
                       : colors.disabledSurface,
                   foregroundColor: isMuteAvailable
                       ? (isMuted
                             ? (_videoStyle
                                   ? const Color(0xFF10141E)
-                                  : colors.accentIcon)
+                                  : Colors.white)
                             : colors.iconPrimary)
                       : colors.disabledForeground,
                   semanticsEnabled: isMuteAvailable,
@@ -157,14 +160,16 @@ class CallControls extends StatelessWidget {
                       : Icons.volume_down_outlined,
                   backgroundColor: isSpeakerAvailable
                       ? (isSpeakerOn
-                            ? (_videoStyle ? Colors.white : colors.accent)
+                            ? (_videoStyle
+                                  ? Colors.white
+                                  : AppColors.callAction)
                             : colors.surfaceRaised)
                       : colors.disabledSurface,
                   foregroundColor: isSpeakerAvailable
                       ? (isSpeakerOn
                             ? (_videoStyle
                                   ? const Color(0xFF10141E)
-                                  : colors.accentIcon)
+                                  : Colors.white)
                             : colors.iconPrimary)
                       : colors.disabledForeground,
                   semanticsEnabled: isSpeakerAvailable,

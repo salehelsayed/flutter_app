@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/domain/call_media.dart';
@@ -124,7 +125,7 @@ class IncomingCallScreen extends StatelessWidget {
                     : l10n.call_answer_unavailable,
                 label: l10n.call_video_status_audio_only,
                 icon: Icons.call_rounded,
-                backgroundColor: colors.accent,
+                backgroundColor: AppColors.callAction,
                 enabled: _canRespond && !mediaChoiceInFlight,
                 onPressed: onUseAudioOnly!,
                 constrainLabel: true,
@@ -139,7 +140,7 @@ class IncomingCallScreen extends StatelessWidget {
                     : l10n.call_answer_unavailable,
                 label: l10n.call_answer,
                 icon: Icons.videocam_outlined,
-                backgroundColor: colors.accent,
+                backgroundColor: AppColors.callAction,
                 enabled: _canRespond && !mediaChoiceInFlight,
                 onPressed: onAcceptVideo!,
                 constrainLabel: true,
@@ -155,7 +156,7 @@ class IncomingCallScreen extends StatelessWidget {
                     : l10n.call_answer_unavailable,
                 label: l10n.call_answer,
                 icon: Icons.call_rounded,
-                backgroundColor: colors.accent,
+                backgroundColor: AppColors.callAction,
                 enabled: _canRespond,
                 onPressed: onAnswer,
                 constrainLabel: hasVideo,
