@@ -867,15 +867,22 @@ void main() {
     },
   );
 
-  Widget arcSurface(Map<String, OrbitThoughtNote> notes) => wrap(
+  Widget arcSurface(
+    Map<String, OrbitThoughtNote> notes, {
+    List<OrbitItem>? members,
+    DateTime Function()? now,
+    ValueChanged<OrbitFriend>? onFriendTap,
+    ValueChanged<String>? onThoughtTap,
+  }) => wrap(
     InnerCircleInteractiveSurface(
       userPeerId: 'self',
       onSelfAvatarTap: () {},
-      items: items,
-      onFriendTap: (_) {},
+      items: members ?? items,
+      onFriendTap: onFriendTap ?? (_) {},
       onGroupTap: (_) {},
       thoughtsByPeerId: notes,
-      nowProvider: () => start,
+      onThoughtTap: onThoughtTap,
+      nowProvider: now ?? () => start,
     ),
   );
 
@@ -957,6 +964,110 @@ void main() {
       await tester.pump();
       expect(viz().overflowExpanded, isFalse);
       expect(find.byType(OrbitThoughtNoteBubble), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('collapsed overflow reports only live hidden Thoughts', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
+    final initialClock = tester.binding.clock.now();
+    DateTime now() =>
+        start.add(tester.binding.clock.now().difference(initialClock));
+    await tester.pumpWidget(
+      arcSurface(
+        {
+          'friend-13': note('live-arc', lifetime: const Duration(seconds: 1)),
+          'friend-14': note('expired-arc', lifetime: Duration.zero),
+        },
+        members: [...items, OrbitFriendItem(_friend(14))],
+        now: now,
+      ),
+    );
+
+    final badge = find.byType(OverflowBadge);
+    final expander = find.bySemanticsLabel(RegExp('2 more people'));
+    final marker = find.descendant(
+      of: badge,
+      matching: find.byIcon(Icons.more_horiz),
+    );
+    expect(find.text('+2'), findsOneWidget);
+    expect(tester.getSemantics(expander).getSemanticsData().value, '1 thought');
+    expect(marker, findsOneWidget);
+    expect(find.byKey(const ValueKey('orbit-node-13')), findsNothing);
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(tester.getSemantics(expander).getSemanticsData().value, isEmpty);
+    expect(marker, findsNothing);
+    expect(find.text('+2'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'expanded overflow offers a separate Thought action until expiry',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      addTearDown(semantics.dispose);
+      final initialClock = tester.binding.clock.now();
+      DateTime now() =>
+          start.add(tester.binding.clock.now().difference(initialClock));
+      final openedThoughts = <String>[];
+      final openedChats = <String>[];
+      await tester.pumpWidget(
+        arcSurface(
+          {
+            'friend-0': note('ring-thought', text: 'Ring note'),
+            'friend-13': note(
+              'arc-thought',
+              text: 'Arc note',
+              lifetime: const Duration(seconds: 1),
+            ),
+          },
+          now: now,
+          onFriendTap: (friend) => openedChats.add(friend.peerId),
+          onThoughtTap: openedThoughts.add,
+        ),
+      );
+
+      final overflow = find.byType(OverflowBadge);
+      final arcFace = find.byKey(const ValueKey('orbit-node-13'));
+      final arcThought = find.bySemanticsLabel(
+        'New thought from Friend 13: Arc note',
+      );
+      expect(find.text('Ring note'), findsOneWidget);
+      expect(arcThought, findsNothing);
+      await tester.tap(overflow);
+      await tester.pump();
+      expect(find.text('Ring note'), findsNothing);
+      expect(arcFace, findsNothing);
+      await tester.tap(overflow);
+      await tester.pump();
+      expect(arcFace, findsOneWidget);
+      expect(find.text('Arc note'), findsNothing);
+      expect(arcThought, findsOneWidget);
+      expect(
+        tester
+            .getSemantics(arcThought)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+      await tester.tap(arcThought);
+      expect(openedThoughts, ['arc-thought']);
+      expect(openedChats, isEmpty);
+      await tester.tap(arcFace);
+      expect(openedChats, ['friend-13']);
+      expect(openedThoughts, ['arc-thought']);
+
+      await tester.pump(const Duration(seconds: 1));
+      expect(arcThought, findsNothing);
+      expect(arcFace, findsOneWidget);
+      await tester.tap(overflow);
+      await tester.pump();
+      expect(arcFace, findsNothing);
+      expect(find.text('Ring note'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     },
   );
