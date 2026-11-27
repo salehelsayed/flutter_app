@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderOpacity;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
@@ -3604,7 +3605,113 @@ void main() {
 
   // Only live additions animate. Initial history stays still, and subsequent
   // presentation updates must not interrupt a live message's animation.
-  group('156 QW-11 entrance animation', () {
+  group('live message entrance', () {
+    const liveMessageId = 'arrival';
+    const deadline = Duration(seconds: 3);
+
+    Future<void> showLiveMessage(
+      WidgetTester tester, {
+      FakeAccessibilityFeatures accessibility =
+          const FakeAccessibilityFeatures(),
+    }) async {
+      tester.view.devicePixelRatio = 2;
+      tester.view.physicalSize = const Size(720, 1560);
+      tester.platformDispatcher.accessibilityFeaturesTestValue = accessibility;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+
+      final history = [makeMessage(id: 'history', text: 'Previous message')];
+      await tester
+          .pumpWidget(buildTestWidget(messages: history, initialLoadDone: true))
+          .timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 500)).timeout(deadline);
+      await tester
+          .pumpWidget(
+            buildTestWidget(
+              messages: [
+                ...history,
+                makeMessage(
+                  id: liveMessageId,
+                  text: 'Just arrived',
+                  timestamp: '2026-02-09T15:31:00.000Z',
+                ),
+              ],
+              initialLoadDone: true,
+            ),
+          )
+          .timeout(deadline);
+    }
+
+    ({double opacity, double verticalOffset}) readLiveMessageMotion(
+      WidgetTester tester,
+    ) {
+      final row = find.byKey(const ValueKey('msg-$liveMessageId'));
+      final card = find.descendant(of: row, matching: find.byType(LetterCard));
+      expect(card, findsOneWidget);
+      final opacityEffects = tester.renderObjectList<RenderOpacity>(
+        find.descendant(of: row, matching: find.byType(Opacity)),
+      );
+      final transform = tester
+          .renderObject(card)
+          .getTransformTo(tester.renderObject(row));
+      return (
+        opacity: opacityEffects.fold(
+          1.0,
+          (opacity, effect) => opacity * effect.opacity,
+        ),
+        verticalOffset: transform.getTranslation().y,
+      );
+    }
+
+    testWidgets('live messages ease out and settle on the shorter entrance', (tester) async {
+      await showLiveMessage(tester).timeout(deadline);
+      final start = readLiveMessageMotion(tester);
+      expect(start.opacity, 0);
+      expect(start.verticalOffset, greaterThan(0));
+
+      await tester.pump().timeout(deadline);
+      await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+      final halfway = readLiveMessageMotion(tester);
+      final progress = Curves.easeOut.transform(0.5);
+      expect(halfway.opacity, closeTo(progress, 0.001), reason: 'at 100 ms');
+      expect(
+        halfway.verticalOffset,
+        closeTo(start.verticalOffset * (1 - progress), 0.001),
+      );
+
+      await tester.pump(const Duration(milliseconds: 99)).timeout(deadline);
+      final beforeEnd = readLiveMessageMotion(tester);
+      expect(beforeEnd.opacity, lessThan(1));
+      expect(beforeEnd.verticalOffset, greaterThan(0));
+
+      await tester.pump(const Duration(milliseconds: 1)).timeout(deadline);
+      final end = readLiveMessageMotion(tester);
+      expect(end.opacity, 1);
+      expect(end.verticalOffset, closeTo(0, 0.001));
+    });
+
+    for (final setting in {
+      'accessible navigation': const FakeAccessibilityFeatures(
+        accessibleNavigation: true,
+      ),
+      'disabled animations': const FakeAccessibilityFeatures(
+        disableAnimations: true,
+      ),
+    }.entries) {
+      testWidgets('live messages appear immediately with ${setting.key}', (
+        tester,
+      ) async {
+        await showLiveMessage(tester, accessibility: setting.value).timeout(deadline);
+        final firstPaint = readLiveMessageMotion(tester);
+        expect(firstPaint.opacity, 1, reason: 'on the insertion frame');
+        expect(firstPaint.verticalOffset, closeTo(0, 0.001));
+
+        await tester.pump(const Duration(milliseconds: 100)).timeout(deadline);
+        expect(readLiveMessageMotion(tester), firstPaint);
+      });
+    }
+
     for (final initialLoadDone in [false, true]) {
       testWidgets('TC-21: all historical rows stay still on first paint '
           '(initialLoadDone=$initialLoadDone)', (tester) async {
