@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/core/diagnostics/engagement_chat_checkpoint_store.dart';
 import 'package:flutter_app/core/diagnostics/engagement_chat_observer.dart';
 import 'package:flutter_app/core/diagnostics/engagement_chat_witness.dart';
@@ -472,49 +473,69 @@ void main() {
     expect((await _within(_checkpoint(store)))['contacts'], isEmpty);
   });
 
-  test('E2O-010 held private write cannot acknowledge or overwrite successor', () async {
-    final gate = barrier();
-    final store = await open(
-      beforeCommit: (temporaryPath) async {
-        final raw = jsonDecode(
-          await _within(File(temporaryPath).readAsString()),
-        ) as Map<String, dynamic>;
-        final scope = raw['scope'] as Map<String, dynamic>;
-        if (raw['phase'] == 'qualified_pending' &&
-            scope['profileBinding'] == _ownerA.profileBinding) {
-          await _within(gate.hold());
-        }
-      },
-    );
-    final observer = await make(store: store);
-    Future<String> admittedCommunication() async {
-      final capture = _capture(observer);
-      _facts(observer, capture, contact: 'peer-a-secret');
-      return 'durably-admitted';
-    }
+  test(
+    'E2O-010 held private write cannot acknowledge or overwrite successor',
+    () async {
+      const observerDeadline = Duration(milliseconds: 100);
+      final clock = FakeAsync();
+      final gate = barrier();
+      final store = await open(
+        beforeCommit: (temporaryPath) async {
+          final raw = jsonDecode(
+            await _within(File(temporaryPath).readAsString()),
+          ) as Map<String, dynamic>;
+          final scope = raw['scope'] as Map<String, dynamic>;
+          if (raw['phase'] == 'qualified_pending' &&
+              scope['profileBinding'] == _ownerA.profileBinding) {
+            await _within(gate.hold());
+          }
+        },
+      );
+      await runZoned(
+        () async {
+          final observer = await make(store: store, deadline: observerDeadline);
+          Future<String> admittedCommunication() async {
+            final capture = _capture(observer);
+            _facts(observer, capture, contact: 'peer-a-secret');
+            return 'durably-admitted';
+          }
 
-    expect(await _within(admittedCommunication()), 'durably-admitted');
-    await _entered(gate);
-    observer.replaceOwner(_ownerB);
-    _facts(
-      observer,
-      _capture(observer, _ownerB),
-      contact: 'peer-b-secret',
-      message: 'message-b',
-    );
-    gate.open();
-    await _drain(observer);
-    expect(observer.phase, EngagementChatPhase.qualifiedRetained);
-    expect(retentions, hasLength(1));
-    expect(retentions.single['account'], _ownerB.accountPeerId);
-    final raw = await _within(_checkpoint(store));
-    expect(
-      (raw['scope'] as Map<String, dynamic>)['profileBinding'],
-      _ownerB.profileBinding,
-    );
-    expect(raw['phase'], 'qualified_retained');
-    expect(raw['contacts'], isEmpty);
-  });
+          expect(await _within(admittedCommunication()), 'durably-admitted');
+          await _within(gate.entered.future);
+          observer.replaceOwner(_ownerB);
+          _facts(
+            observer,
+            _capture(observer, _ownerB),
+            contact: 'peer-b-secret',
+            message: 'message-b',
+          );
+          gate.open();
+          await _drain(observer);
+          expect(observer.phase, EngagementChatPhase.qualifiedRetained);
+          expect(retentions, hasLength(1));
+          expect(retentions.single['account'], _ownerB.accountPeerId);
+          final raw = await _within(_checkpoint(store));
+          expect(
+            (raw['scope'] as Map<String, dynamic>)['profileBinding'],
+            _ownerB.profileBinding,
+          );
+          expect(raw['phase'], 'qualified_retained');
+          expect(raw['contacts'], isEmpty);
+        },
+        zoneSpecification: ZoneSpecification(
+          createTimer: (_, parent, zone, duration, callback) {
+            if (duration != observerDeadline) {
+              return parent.createTimer(zone, duration, callback);
+            }
+            // Hold observer time fixed so the owner change fences the write.
+            return clock.run(
+              (_) => Timer(duration, () => zone.runGuarded(callback)),
+            );
+          },
+        ),
+      );
+    },
+  );
 
   test('E2O-011 calendar file and coarse-port failures stay optional', () async {
     final calendarFailure = await make(
