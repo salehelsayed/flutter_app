@@ -882,16 +882,33 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           : CrossAxisAlignment.center,
       children: [
         text,
-        TranslatePreview(
-          text: _post.text,
-          owner: PreviewOwner.thought(_post.id),
-          ai: translatePreviewAi,
-          delivery: translatePreviewDelivery,
-          onFreeUpSpace: translatePreviewOpenStorage,
-          color: _viewerInk,
-          captureFeatureUse: widget.captureFeatureUse,
+        _withViewerReadableColors(
+          TranslatePreview(
+            text: _post.text,
+            owner: PreviewOwner.thought(_post.id),
+            ai: translatePreviewAi,
+            delivery: translatePreviewDelivery,
+            onFreeUpSpace: translatePreviewOpenStorage,
+            color: _viewerInk,
+            captureFeatureUse: widget.captureFeatureUse,
+          ),
         ),
       ],
+    );
+  }
+
+  Widget _withViewerReadableColors(Widget child) {
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.copyWith(
+        extensions: [
+          ...theme.extensions.values.where(
+            (extension) => extension is! BackgroundReadableColors,
+          ),
+          BackgroundReadableColors.dark,
+        ],
+      ),
+      child: child,
     );
   }
 
@@ -1058,7 +1075,6 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
 
   Widget _bottomChrome(AppLocalizations l10n, {required bool showText}) {
     final voice = _media.where((item) => item.kind == 'voice');
-    final theme = Theme.of(context);
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1090,16 +1106,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             ThoughtVoiceCaption(caption, color: _viewerMutedInk),
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: Theme(
-              data: theme.copyWith(
-                extensions: [
-                  ...theme.extensions.values.where(
-                    (extension) => extension is! BackgroundReadableColors,
-                  ),
-                  BackgroundReadableColors.dark,
-                ],
-              ),
-              child: AudioPlayerWidget(
+            child: _withViewerReadableColors(
+              AudioPlayerWidget(
                 key: ValueKey('thought-voice-${attachment.mediaId}'),
                 attachment: attachment.toSharedMediaAttachment(),
                 onRetryUnavailableMedia: () => unawaited(_download(attachment)),
