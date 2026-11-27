@@ -1499,6 +1499,8 @@
   "@chat_search_hint": {"description": "Chat search copy, owner-approved 2026-11-04 (best practice, m-532b7ee9)"},
   "chat_search_count": "{current} of {total}",
   "@chat_search_count": {"description": "Chat search copy, owner-approved 2026-11-04 (best practice, m-532b7ee9)", "placeholders": {"current": {"type": "int"}, "total": {"type": "int"}}},
+  "chat_search_no_messages": "No messages match “{query}”",
+  "@chat_search_no_messages": {"description": "Empty result in direct chat search", "placeholders": {"query": {"type": "String"}}},
   "chat_search_previous": "Previous match",
   "@chat_search_previous": {"description": "Chat search copy, owner-approved 2026-11-04 (best practice, m-532b7ee9)"},
   "chat_search_next": "Next match",

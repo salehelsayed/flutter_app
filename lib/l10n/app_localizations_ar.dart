@@ -3035,6 +3035,11 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String chat_search_no_messages(String query) {
+    return 'لا توجد رسائل تطابق «$query»';
+  }
+
+  @override
   String get chat_search_previous => 'النتيجة السابقة';
 
   @override

@@ -5060,6 +5060,12 @@ abstract class AppLocalizations {
   /// **'{current} of {total}'**
   String chat_search_count(int current, int total);
 
+  /// Empty result in direct chat search
+  ///
+  /// In en, this message translates to:
+  /// **'No messages match “{query}”'**
+  String chat_search_no_messages(String query);
+
   /// Chat search copy, owner-approved 2026-11-04 (best practice, m-532b7ee9)
   ///
   /// In en, this message translates to:

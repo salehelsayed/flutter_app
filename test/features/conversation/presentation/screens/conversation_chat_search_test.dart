@@ -4,7 +4,9 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/empty_conversation_state.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -60,42 +62,260 @@ void main() {
     required GatedPageMessageRepository messageRepo,
     required List<String> revealed,
     bool realReveal = false,
+    Locale locale = const Locale('en'),
+    TextScaler? textScaler,
+    bool eligibleForIntroBanner = false,
   }) async {
     final contactRepo = InMemoryContactRepository();
     contactRepo.addTestContact(makeContact());
-    await tester.pumpWidget(
-      MaterialApp(
-        locale: const Locale('en'),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: ConversationWired(
-          contact: makeContact(),
-          identityRepo: StubIdentityRepository(makeIdentity()),
-          messageRepo: messageRepo,
-          chatMessageListener: ChatMessageListener(
-            chatMessageStream: const Stream.empty(),
-            messageRepo: messageRepo,
-            contactRepo: contactRepo,
+    if (eligibleForIntroBanner) {
+      contactRepo.addTestContact(
+        makeContact().copyWith(peerId: '12D3KooWOtherFriend', username: 'Bea'),
+      );
+    }
+    await tester
+        .pumpWidget(
+          MaterialApp(
+            locale: locale,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            builder: textScaler == null
+                ? null
+                : (context, child) => MediaQuery(
+                    data: MediaQuery.of(context)
+                        .copyWith(textScaler: textScaler),
+                    child: child!,
+                  ),
+            home: ConversationWired(
+              contact: makeContact(),
+              identityRepo: StubIdentityRepository(makeIdentity()),
+              messageRepo: messageRepo,
+              chatMessageListener: ChatMessageListener(
+                chatMessageStream: const Stream.empty(),
+                messageRepo: messageRepo,
+                contactRepo: contactRepo,
+              ),
+              p2pService: StubP2PService(),
+              contactRepo: contactRepo,
+              micPermissionGateway: FakeMicPermissionGateway(),
+              revealConversationMessageFn: realReveal
+                  ? null
+                  : (messageId) async {
+                      revealed.add(messageId);
+                    },
+            ),
           ),
-          p2pService: StubP2PService(),
-          contactRepo: contactRepo,
-          micPermissionGateway: FakeMicPermissionGateway(),
-          revealConversationMessageFn: realReveal
-              ? null
-              : (messageId) async {
-                  revealed.add(messageId);
-                },
-        ),
-      ),
-    );
-    await tester.pump(const Duration(milliseconds: 400));
+        )
+        .timeout(const Duration(seconds: 3));
+    await tester
+        .pump(const Duration(milliseconds: 400))
+        .timeout(const Duration(seconds: 3));
   }
 
   Future<void> settle(WidgetTester tester) async {
     for (var i = 0; i < 8; i++) {
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester
+          .pump(const Duration(milliseconds: 100))
+          .timeout(const Duration(seconds: 3));
     }
   }
+
+  void setChatViewport(WidgetTester tester, double width) {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = Size(width, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+  }
+
+  AppLocalizations labels(WidgetTester tester) =>
+      AppLocalizations.of(tester.element(find.byType(ConversationWired)))!;
+
+  Finder emptySearchSurface(Finder label) => find.ancestor(
+    of: label,
+    matching: find.byWidgetPredicate(
+      (widget) =>
+          widget is ColoredBox && widget.color == const Color(0xFF0B0D12),
+    ),
+  );
+
+  group('chat search and introduction promo', () {
+    const deadline = Duration(seconds: 3);
+    for (final (language, width, query, emptyLabel) in [
+      ('en', 320.0, 'meteor', 'No messages match “meteor”'),
+      ('de', 360.0, 'Meteor', 'Keine Nachrichten passen zu „Meteor“'),
+      ('ar', 390.0, 'نيزك', 'لا توجد رسائل تطابق «نيزك»'),
+    ]) {
+      testWidgets('shows a settled empty search in $language at AX size', (
+        tester,
+      ) async {
+        setChatViewport(tester, width);
+        await pumpWired(
+          tester,
+          messageRepo: GatedPageMessageRepository(),
+          revealed: [],
+          locale: Locale(language),
+          textScaler: const TextScaler.linear(3.1),
+        );
+        final l10n = labels(tester);
+        await tester
+            .tap(find.byTooltip(l10n.chat_search_action))
+            .timeout(deadline);
+        tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+        await settle(tester);
+        final bar = find.byType(ChatSearchBar);
+        final searchField = find.descendant(
+          of: bar,
+          matching: find.byType(TextField),
+        );
+        final empty = find.text(emptyLabel);
+        expect(empty, findsNothing);
+        await tester.enterText(searchField, ' $query ').timeout(deadline);
+        await tester.pump().timeout(deadline);
+        expect(empty, findsNothing);
+        await settle(tester);
+
+        expect(empty, findsOneWidget);
+        final text = tester.widget<Text>(empty);
+        expect(text.style?.color, const Color(0xFFB4BCC6));
+        final searchSurface = emptySearchSurface(empty);
+        expect(searchSurface, findsOneWidget);
+        final bounds = tester.getRect(searchSurface);
+        expect(bounds.top, greaterThanOrEqualTo(tester.getBottomLeft(bar).dy));
+        expect(bounds.bottom, lessThan(844 - 320));
+        expect(tester.getCenter(empty).dx, closeTo(width / 2, 0.5));
+        expect(
+          tester.getTopLeft(empty).dy,
+          inInclusiveRange(bounds.top, bounds.bottom),
+        );
+        final scrollable = find.descendant(
+          of: searchSurface,
+          matching: find.byType(Scrollable),
+        );
+        final position = tester.state<ScrollableState>(scrollable).position;
+        if (position.maxScrollExtent == 0) {
+          expect(tester.getCenter(empty).dy, closeTo(bounds.center.dy, 0.5));
+        } else {
+          await tester
+              .drag(scrollable, Offset(0, -position.maxScrollExtent - 80))
+              .timeout(deadline);
+          await settle(tester);
+          expect(position.pixels, greaterThan(0));
+        }
+        expect(
+          tester.getBottomLeft(empty).dy,
+          inInclusiveRange(bounds.top, bounds.bottom),
+        );
+        expect(
+          Directionality.of(tester.element(empty)),
+          language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+        );
+        expect(tester.takeException(), isNull);
+
+        await tester.enterText(searchField, ' ').timeout(deadline);
+        await settle(tester);
+        expect(empty, findsNothing);
+        expect(find.byType(EmptyConversationState), findsOneWidget);
+        await tester
+            .tap(find.byTooltip(l10n.chat_search_close))
+            .timeout(deadline);
+        await settle(tester);
+        expect(bar, findsNothing);
+        expect(find.byType(EmptyConversationState), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+      });
+    }
+
+    testWidgets('hides the introduction promo throughout active search', (
+      tester,
+    ) async {
+      setChatViewport(tester, 390);
+      final repo = GatedPageMessageRepository();
+      await repo.saveMessage(makeMessage(5)).timeout(deadline);
+      final revealed = <String>[];
+      await pumpWired(
+        tester,
+        messageRepo: repo,
+        revealed: revealed,
+        eligibleForIntroBanner: true,
+      );
+      await settle(tester);
+      final promo = find.byType(IntroBanner);
+      expect(promo, findsOneWidget);
+      final l10n = labels(tester);
+      await tester
+          .tap(find.byTooltip(l10n.chat_search_action))
+          .timeout(deadline);
+      await settle(tester);
+      expect(promo, findsNothing);
+      final searchField = find.descendant(
+        of: find.byType(ChatSearchBar),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(searchField, 'meteor').timeout(deadline);
+      await settle(tester);
+      final empty = find.text('No messages match “meteor”');
+      expect(empty, findsOneWidget);
+      expect(
+        tester.getCenter(empty).dy,
+        closeTo(tester.getCenter(emptySearchSurface(empty)).dy, 0.5),
+      );
+      await tester.enterText(searchField, 'Dahab').timeout(deadline);
+      await settle(tester);
+      expect(empty, findsNothing);
+      expect(find.text(l10n.chat_search_count(1, 1)), findsOneWidget);
+      expect(revealed, ['msg-goto-5']);
+      expect(promo, findsNothing);
+      await tester
+          .tap(find.byTooltip(l10n.chat_search_close))
+          .timeout(deadline);
+      await settle(tester);
+      expect(promo, findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+    });
+
+    for (final withMessage in [false, true]) {
+      testWidgets(
+        'hides the introduction promo while typing, history=$withMessage',
+        (tester) async {
+          setChatViewport(tester, withMessage ? 390 : 320);
+          final repo = GatedPageMessageRepository();
+          if (withMessage) {
+            await repo.saveMessage(makeMessage(5)).timeout(deadline);
+          } else {
+            tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+          }
+          await pumpWired(
+            tester,
+            messageRepo: repo,
+            revealed: [],
+            textScaler: withMessage ? null : const TextScaler.linear(3.1),
+            eligibleForIntroBanner: true,
+          );
+          await settle(tester);
+          final promo = find.byType(IntroBanner);
+          final composer = find.byType(TextField);
+          if (withMessage) expect(promo, findsOneWidget);
+          await tester.enterText(composer, 'Draft').timeout(deadline);
+          tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+          await settle(tester);
+          expect(promo, findsNothing);
+          expect(tester.widget<TextField>(composer).controller!.text, 'Draft');
+          expect(tester.takeException(), isNull);
+          if (withMessage) {
+            tester.view.resetViewInsets();
+            await settle(tester);
+            expect(promo, findsOneWidget);
+            expect(
+              tester.widget<TextField>(composer).controller!.text,
+              'Draft',
+            );
+          }
+          await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+        },
+      );
+    }
+  });
 
   testWidgets(
     'the magnifier searches this chat newest first, loads older pages for an '
