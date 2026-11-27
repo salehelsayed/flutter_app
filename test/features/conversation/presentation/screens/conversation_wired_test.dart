@@ -20950,6 +20950,7 @@ void main() {
     const deadline = Duration(seconds: 3);
     const newestWindow = 300;
     const messageCount = 330;
+    const voiceNoteCount = 2;
     final messagesList = find.byKey(const ValueKey('messages'));
 
     Future<({FakeMessageRepository repo, List<ConversationMessage> seeded})>
@@ -20962,7 +20963,36 @@ void main() {
       final repo = FakeMessageRepository();
       final peer = makeContact().peerId;
       final firstSent = DateTime.utc(2026, 11, 26, 12);
-      final seeded = List.generate(messageCount, (index) {
+      final voiceNotes = List.generate(voiceNoteCount, (index) {
+        final id = 'phone-history-voice-$index';
+        final timestamp = firstSent
+            .subtract(Duration(hours: 6 - index))
+            .toIso8601String();
+        return ConversationMessage(
+          id: id,
+          contactPeerId: peer,
+          senderPeerId: peer,
+          text: '',
+          timestamp: timestamp,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: timestamp,
+          media: [
+            MediaAttachment(
+              id: '$id-audio',
+              messageId: id,
+              mime: 'audio/mp4',
+              size: 1234,
+              mediaType: 'audio',
+              durationMs: 1200,
+              localPath: 'media/$id.m4a',
+              downloadStatus: 'done',
+              createdAt: timestamp,
+            ),
+          ],
+        );
+      });
+      final numbered = List.generate(messageCount, (index) {
         final timestamp = firstSent
             .add(Duration(seconds: index))
             .toIso8601String();
@@ -20978,6 +21008,7 @@ void main() {
           createdAt: timestamp,
         );
       });
+      final seeded = [...voiceNotes, ...numbered];
       repo.store.addEntries(
         seeded.map((message) => MapEntry(message.id, message)),
       );
@@ -21004,7 +21035,7 @@ void main() {
           contactRepo: FakeContactRepository(),
         ),
         sendFn: _instantSuccessSendFn,
-        initialMessages: seeded.sublist(messageCount - newestWindow),
+        initialMessages: seeded.sublist(seeded.length - newestWindow),
         callTimelineSource: calls,
       ).timeout(deadline);
       await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
@@ -21041,7 +21072,7 @@ void main() {
     ) async {
       final (repo: repo, seeded: seeded) = await openAtLatest(tester)
           .timeout(deadline);
-      final firstRetained = seeded[messageCount - newestWindow];
+      final firstRetained = seeded[seeded.length - newestWindow];
       await scrollToMessage(tester, firstRetained.id).timeout(deadline);
       await tester.pump().timeout(deadline);
 
@@ -21065,11 +21096,18 @@ void main() {
       await tester.pump().timeout(deadline);
       ConversationScreen screen() =>
           tester.widget(find.byType(ConversationScreen));
-      expect(screen().messages, hasLength(messageCount));
+      expect(screen().messages, hasLength(seeded.length));
+      final olderVoiceIds = seeded.take(voiceNoteCount).map((voice) => voice.id);
+      expect(
+        screen().messages
+            .where((message) => message.media.isNotEmpty)
+            .map((message) => message.id),
+        orderedEquals(olderVoiceIds),
+      );
 
       scroll.jumpTo(scroll.position.minScrollExtent);
       await tester.pump().timeout(deadline);
-      final oldest = seeded.first;
+      final oldest = seeded[voiceNoteCount];
       await scrollToMessage(tester, oldest.id).timeout(deadline);
       final oldestRow = find.byKey(ValueKey('msg-${oldest.id}'));
       expect(oldestRow, findsOneWidget);
@@ -21084,7 +21122,14 @@ void main() {
       await tester.pump().timeout(deadline);
 
       expect(screen().messages.last.status, 'read');
-      expect(screen().messages.first.id, oldest.id);
+      expect(
+        screen().messages.firstWhere((message) => message.media.isEmpty).id,
+        oldest.id,
+      );
+      expect(
+        screen().messages.take(voiceNoteCount).map((message) => message.id),
+        orderedEquals(olderVoiceIds),
+      );
       expect(oldestRow, findsOneWidget);
     });
   });
