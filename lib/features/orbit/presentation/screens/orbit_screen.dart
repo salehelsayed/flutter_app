@@ -14,6 +14,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/diagnostics/active_identity_reporter.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/inner_circle_interactive_surface.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
@@ -1329,16 +1330,24 @@ class _OrbitScreenView extends StatelessWidget {
     );
     // SE-41 T2b (O6): the soft update banner is a thin strip at the top.
     final scaffold = UpdateAvailableBannerHost(child: orbitScaffold);
+    final theme = Theme.of(context);
+    final useDarkMirror =
+        backgroundPreference == BackgroundPreference.defaultBackground &&
+        readableToneOverride == null &&
+        theme.brightness == Brightness.light;
     final surface = visualTreatment == OrbitVisualTreatment.current
-        ? AmbientBackground(
-            preference: backgroundPreference,
-            readableToneOverride: readableToneOverride,
-            child: scaffold,
+        ? Theme(
+            data: useDarkMirror ? AppTheme.darkTheme : theme,
+            child: AmbientBackground(
+              preference: backgroundPreference,
+              readableToneOverride: readableToneOverride,
+              child: scaffold,
+            ),
           )
         : OrbitalQuietBackground(
             light:
                 orbitalQuietLightOverride ??
-                Theme.of(context).brightness == Brightness.light,
+                theme.brightness == Brightness.light,
             neutralGlobalActions: orbitalQuietNeutralGlobalActions,
             version2: visualTreatment == OrbitVisualTreatment.orbitalQuietV2,
             localAtmosphere: orbitalQuietV2Options.localAtmosphere,
