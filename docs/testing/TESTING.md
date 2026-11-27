@@ -5113,7 +5113,9 @@ beyond the cap uses an 18-point badge.
 `orbit_thought_fixed_seats_test.dart` uses the real Surface to check default
 visibility, fixed rendered seats and painted rings at 0.5, 2 and 10 seconds,
 8/5 and 15/6 preview and badge counts, RTL, pinch-hide, and opening a full
-Thought from its visible preview or badge. The avatar still opens chat. `orbit_thought_layout_test.dart`
+Thought from its visible preview or badge. The 320-point English and Arabic
+cases also tap the complete badge at the edge and confirm the avatar's centre
+continues to open chat. `orbit_thought_layout_test.dart`
 covers bounded placement and its fallbacks. The existing 562-case viewport
 and cadence matrix in `orbit_thought_avatar_stability_test.dart` checks both
 absolute and relative seats, including Reduce Motion. The earlier moving-face

@@ -64,19 +64,26 @@ Map<int, OrbitThoughtPlacement> layoutOrbitThoughts({
     result[entry.key] =
         placement ??
         (
-          rect: Rect.fromLTWH(
-            mirrored
-                ? avatar.left + 4
-                : avatar.right - orbitThoughtBadgeSize - 4,
-            avatar.top + 3,
-            orbitThoughtBadgeSize,
-            orbitThoughtBadgeSize,
-          ),
+          rect: _badgeRect(canvas, avatar, mirrored),
           side: null,
           compact: false,
         );
   }
   return result;
+}
+
+Rect _badgeRect(Rect canvas, Rect avatar, bool mirrored) {
+  final left = mirrored
+      ? avatar.left + 4
+      : avatar.right - orbitThoughtBadgeSize - 4;
+  final lastLeft = math.max(canvas.left, canvas.right - orbitThoughtBadgeSize);
+  final lastTop = math.max(canvas.top, canvas.bottom - orbitThoughtBadgeSize);
+  return Rect.fromLTWH(
+    left.clamp(canvas.left, lastLeft).toDouble(),
+    (avatar.top + 3).clamp(canvas.top, lastTop).toDouble(),
+    orbitThoughtBadgeSize,
+    orbitThoughtBadgeSize,
+  );
 }
 
 Rect? _findPosition(

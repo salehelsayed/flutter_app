@@ -149,14 +149,14 @@ void main() {
             for (final entry in result.entries) {
               final placement = entry.value;
               final rect = placement.rect;
-              if (placement.side == null) {
-                expect(avatars[entry.key]!.contains(rect.center), isTrue);
-                continue;
-              }
               expect(rect.top, greaterThanOrEqualTo(canvas.top));
               expect(rect.bottom, lessThanOrEqualTo(canvas.bottom + 0.001));
               expect(rect.left, greaterThanOrEqualTo(canvas.left));
               expect(rect.right, lessThanOrEqualTo(canvas.right + 0.001));
+              if (placement.side == null) {
+                expect(avatars[entry.key]!.contains(rect.center), isTrue);
+                continue;
+              }
               if (placement.compact) {
                 expect(rect.width, lessThanOrEqualTo(96.001));
               }
