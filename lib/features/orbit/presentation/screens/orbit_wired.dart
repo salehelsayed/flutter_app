@@ -360,6 +360,24 @@ class OrbitWired extends StatefulWidget {
   State<OrbitWired> createState() => _OrbitWiredState();
 }
 
+class _ThoughtComposerRoute extends ModalBottomSheetRoute<void> {
+  _ThoughtComposerRoute({
+    required super.builder,
+    required super.capturedThemes,
+    required super.barrierLabel,
+    required super.barrierOnTapHint,
+    required super.modalBarrierColor,
+  }) : super(
+         isScrollControlled: true,
+         useSafeArea: true,
+         backgroundColor: Colors.transparent,
+         enableDrag: false,
+       );
+
+  // The route retains ownership of the controller used by the swipe gesture.
+  AnimationController get swipeAnimation => controller!;
+}
+
 class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   static const _acceptRecoveryRetryCount = 5;
   static const _acceptRecoveryRetryDelay = Duration(milliseconds: 500);
@@ -1192,10 +1210,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       if (!mounted) return;
       final navigator = Navigator.of(context);
       final material = MaterialLocalizations.of(context);
-      final animation = BottomSheet.createAnimationController(
-        navigator.overlay!,
-      );
-      final route = ModalBottomSheetRoute<void>(
+      late final _ThoughtComposerRoute route;
+      route = _ThoughtComposerRoute(
         capturedThemes: InheritedTheme.capture(
           from: context,
           to: navigator.context,
@@ -1203,15 +1219,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         barrierLabel: material.scrimLabel,
         barrierOnTapHint: material.scrimOnTapHint(material.bottomSheetLabel),
         modalBarrierColor: Theme.of(context).bottomSheetTheme.modalBarrierColor,
-        isScrollControlled: true,
-        // The composer's header can reach the top; keep it below the notch.
-        useSafeArea: true,
-        backgroundColor: Colors.transparent,
-        enableDrag: false,
-        transitionAnimationController: animation,
         builder: (_) => ComposePostSheet(
           thoughtsOnly: true,
-          swipeAnimation: animation,
+          swipeAnimation: route.swipeAnimation,
           replacesCurrentThought: _thoughtsByPeerId.containsKey(
             identity.peerId,
           ),
@@ -1281,12 +1291,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           },
         ),
       );
-      try {
-        await navigator.push(route);
-        await route.completed;
-      } finally {
-        animation.dispose();
-      }
+      await navigator.push(route);
       // The sheet hands its draft back only once its close animation ends.
       await closed.future;
     } finally {
