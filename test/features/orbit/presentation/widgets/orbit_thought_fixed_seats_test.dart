@@ -218,17 +218,53 @@ void main() {
           }
           await tester.tap(target).timeout(_deadline);
           expect(opened, ['thought-$index']);
-          // Start the pushed route before advancing its transition clock.
-          await tester.pump().timeout(_deadline);
-          await _advance(tester, const Duration(milliseconds: 400));
-          await tester.pump().timeout(_deadline);
-          final card = find.byType(ThoughtCardScreen);
-          expect(card, findsOneWidget);
-          expect(
-            tester.widget<ThoughtCardScreen>(card).initialPost.id,
-            'thought-$index',
-          );
+          expect(await _openedPostId(tester), 'thought-$index');
           expect(chats, isEmpty);
+        } finally {
+          await _unmount(tester);
+        }
+      },
+    );
+  }
+
+  for (final locale in ['en', 'ar']) {
+    testWidgets(
+      'BL-108 narrow edge badge opens the Thought and leaves the face tap for chat ($locale)',
+      (tester) async {
+        final chats = <String>[];
+        final opened = <String>[];
+        await _mount(
+          tester,
+          count: 13,
+          thoughts: 13,
+          locale: locale,
+          viewport: const Size(320, 568),
+          onChat: chats.add,
+          onThoughtSelected: opened.add,
+        );
+        try {
+          await _advance(tester, const Duration(seconds: 2));
+          final canvas = tester.getRect(
+            find.byKey(const ValueKey('orbit-viz-canvas')),
+          );
+          final badge = find.byKey(const ValueKey('orbit-thought-badge-7'));
+          expect(badge, findsOneWidget);
+          final rect = tester.getRect(badge);
+          expect(rect.left, greaterThanOrEqualTo(canvas.left - 0.001));
+          expect(rect.right, lessThanOrEqualTo(canvas.right + 0.001));
+          expect(rect.top, greaterThanOrEqualTo(canvas.top - 0.001));
+          expect(rect.bottom, lessThanOrEqualTo(canvas.bottom + 0.001));
+          expect(rect.width, closeTo(18, 0.001));
+          expect(rect.height, closeTo(18, 0.001));
+
+          await tester.tap(_avatar(7)).timeout(_deadline);
+          expect(chats, ['friend-7']);
+          expect(opened, isEmpty);
+
+          await tester.tap(badge).timeout(_deadline);
+          expect(opened, ['thought-7']);
+          expect(await _openedPostId(tester), 'thought-7');
+          expect(chats, ['friend-7']);
         } finally {
           await _unmount(tester);
         }
@@ -242,13 +278,14 @@ Future<void> _mount(
   required int count,
   required int thoughts,
   String locale = 'en',
+  Size viewport = const Size(390, 844),
   double? savedSpacing,
   List<int>? ages,
   ValueChanged<String>? onChat,
   ValueChanged<String>? onThoughtSelected,
 }) async {
   tester.view.devicePixelRatio = 1;
-  tester.view.physicalSize = const Size(390, 844);
+  tester.view.physicalSize = viewport;
   addTearDown(tester.view.reset);
   final store = savedSpacing == null ? null : FakeSecureKeyStore();
   if (store != null) {
@@ -374,6 +411,16 @@ Future<void> _advance(WidgetTester tester, Duration duration) async {
     await tester.pump(frame).timeout(_deadline);
     remaining -= frame;
   }
+}
+
+Future<String> _openedPostId(WidgetTester tester) async {
+  // Give the newly pushed route its first frame before advancing the clock.
+  await tester.pump().timeout(_deadline);
+  await _advance(tester, const Duration(milliseconds: 400));
+  await tester.pump().timeout(_deadline);
+  final card = find.byType(ThoughtCardScreen);
+  expect(card, findsOneWidget);
+  return tester.widget<ThoughtCardScreen>(card).initialPost.id;
 }
 
 Future<void> _unmount(WidgetTester tester) async {
