@@ -99,14 +99,15 @@ class FriendRow extends StatelessWidget {
                 prefix.length < friend.username.length ? '$prefix…' : prefix,
                 titleStyle,
               );
+              const badgeStyle = TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              );
               final badgeWidth = showInnerCircleBadge
                   ? textWidth(
                           l10n.orbit_inner_circle_badge,
-                          const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.3,
-                          ),
+                          badgeStyle,
                         ) +
                         22
                   : 0.0;
@@ -147,11 +148,8 @@ class FriendRow extends StatelessWidget {
                 ),
                 child: Text(
                   l10n.orbit_inner_circle_badge,
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.3,
-                    color: Color(0xCC1DB954), // rgba(29,185,84,0.8)
+                  style: badgeStyle.copyWith(
+                    color: const Color(0xCC1DB954),
                   ),
                 ),
               );

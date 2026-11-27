@@ -6,6 +6,12 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Small badge showing group type with color coding.
 class GroupTypeBadge extends StatelessWidget {
+  static const labelStyle = TextStyle(
+    fontSize: 11,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 0.3,
+  );
+
   final GroupType type;
 
   const GroupTypeBadge({super.key, required this.type});
@@ -28,12 +34,7 @@ class GroupTypeBadge extends StatelessWidget {
       ),
       child: Text(
         _labelForType(type, AppLocalizations.of(context)!),
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          color: typeColor,
-          letterSpacing: 0.3,
-        ),
+        style: labelStyle.copyWith(color: typeColor),
       ),
     );
   }

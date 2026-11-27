@@ -117,11 +117,7 @@ class GroupRow extends StatelessWidget {
                     GroupType.announcement => l10n.group_type_announce,
                     GroupType.qa => l10n.group_type_qa,
                   },
-                  const TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.3,
-                  ),
+                  GroupTypeBadge.labelStyle,
                 ) +
                 16;
             final countWidth = group.unreadCount > 0

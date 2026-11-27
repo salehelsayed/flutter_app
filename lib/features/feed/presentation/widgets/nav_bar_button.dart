@@ -133,7 +133,7 @@ class _NavBadge extends StatelessWidget {
         label,
         textAlign: TextAlign.center,
         style: const TextStyle(
-          fontSize: 10,
+          fontSize: 11,
           fontWeight: FontWeight.w700,
           color: Colors.white,
           height: 1.2,
