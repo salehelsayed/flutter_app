@@ -791,6 +791,7 @@ void main() {
             tester.widget<Icon>(play).color ??
             IconTheme.of(tester.element(play)).color;
         await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+        await tester.pump(const Duration(milliseconds: 1)).timeout(deadline);
         expect(actualColour, expectedColour);
       });
     }
