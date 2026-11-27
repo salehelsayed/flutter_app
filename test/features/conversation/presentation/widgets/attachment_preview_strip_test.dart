@@ -134,8 +134,6 @@ void main() {
     ) async {
       const deadline = Duration(seconds: 3);
       final removed = <int>[];
-      final semantics = tester.ensureSemantics();
-      addTearDown(semantics.dispose);
       await tester
           .pumpWidget(
             buildTestWidget(

@@ -42,8 +42,6 @@ void main() {
       tester,
     ) async {
       const deadline = Duration(seconds: 3);
-      final semantics = tester.ensureSemantics();
-      addTearDown(semantics.dispose);
       var closed = false;
       await tester
           .pumpWidget(

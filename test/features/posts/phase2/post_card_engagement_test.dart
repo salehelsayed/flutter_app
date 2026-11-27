@@ -72,8 +72,6 @@ void main() {
   ) async {
     const deadline = Duration(seconds: 3);
     final actions = <String>[];
-    final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
     await tester
         .pumpWidget(
           MaterialApp(
