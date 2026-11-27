@@ -19,6 +19,7 @@ import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/voice_playback_speed.dart';
 import 'package:flutter_app/shared/widgets/media/waveform_seek_bar.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -758,23 +759,39 @@ void main() {
       expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
     });
 
-    testWidgets('BL-107 voice player exposes named 44 pt play and pause', (
+    testWidgets('BL-107 voice player preserves row hold and 44 pt play and pause', (
       tester,
     ) async {
       const deadline = Duration(seconds: 3);
       final load = fakePlatform.enqueueLoad(
         reportedDuration: const Duration(seconds: 5),
       );
+      var rowActions = 0;
+      final voice = availableAttachment(
+        id: 'accessible-voice',
+        localPath: '/tmp/accessible-voice.m4a',
+        durationMs: 5000,
+      );
       await tester
           .pumpWidget(
-            buildApp(
-              availableAttachment(
-                id: 'accessible-voice',
-                localPath: '/tmp/accessible-voice.m4a',
-                durationMs: 5000,
+            MaterialApp(
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: LetterCard(
+                  senderPeerId: 'voice-fixture-sender',
+                  senderName: 'Alice',
+                  text: '',
+                  time: '12:00',
+                  isIncoming: true,
+                  bubbleLayout: true,
+                  media: [voice],
+                  mediaRenderedSemanticsLabels: {
+                    voice.id: 'Voice fixture ready',
+                  },
+                  onLongPress: () => rowActions++,
+                ),
               ),
-              renderedSemanticsLabel: 'Voice fixture ready',
-              interruptionEvents: const Stream<AudioInterruptionEvent>.empty(),
             ),
           )
           .timeout(deadline);
@@ -794,6 +811,12 @@ void main() {
       expect(tester.getSize(play), const Size(44, 44));
       expect(find.bySemanticsLabel(RegExp('Play voice message')), findsWidgets);
       expect(play.hitTestable(at: const Alignment(-0.95, -0.95)), findsOneWidget);
+
+      await tester.longPress(play).timeout(deadline);
+      await tester.pump().timeout(deadline);
+      expect(rowActions, 1);
+      expect(fakePlatform.playCallCount, 0);
+
       await tester
           .tapAt(tester.getTopLeft(play) + const Offset(1, 1))
           .timeout(deadline);
@@ -810,6 +833,7 @@ void main() {
           .timeout(deadline);
       await flushAsyncPlayerTasks(tester).timeout(deadline);
       expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+      expect(rowActions, 1);
       await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
       await flushAsyncPlayerTasks(tester).timeout(deadline);
     });
