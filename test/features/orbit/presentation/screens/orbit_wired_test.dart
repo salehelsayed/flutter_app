@@ -3088,6 +3088,111 @@ void main() {
       },
     );
 
+    for (final launch in ['untouched', 'edited', 'retained']) {
+      testWidgets('tagged thought swipe-down with a $launch seed', (tester) async {
+        const deadline = Duration(seconds: 3);
+        debugYouPageEnabledOverride = true;
+        addTearDown(() => debugYouPageEnabledOverride = null);
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts
+            .savePost(
+              thought('you-live', text: 'Morning #walks').copyWith(
+                senderPeerId: testIdentity.peerId,
+                authorPeerId: testIdentity.peerId,
+                authorUsername: testIdentity.username,
+                isIncoming: false,
+              ),
+            )
+            .timeout(deadline);
+        await tester
+            .pumpWidget(
+              buildOrbitWired(
+                postRepository: posts,
+                thoughtNowProvider: () => thoughtNow,
+              ),
+            )
+            .timeout(deadline);
+        await pumpOrbitFrames(tester, count: 8).timeout(deadline);
+
+        final composer = find.byType(ComposePostSheet);
+        final field = find.descendant(
+          of: composer,
+          matching: find.byType(TextField),
+        );
+        if (launch == 'retained') {
+          await tester
+              .tap(find.byKey(const ValueKey('orbit-compose-thought')))
+              .timeout(deadline);
+          await pumpOrbitFrames(tester, count: 6).timeout(deadline);
+          await tester.enterText(field, 'Half a thought').timeout(deadline);
+          await tester
+              .tap(find.byKey(const ValueKey('thought-composer-cancel')))
+              .timeout(deadline);
+          await pumpOrbitFrames(tester, count: 6).timeout(deadline);
+        }
+
+        await tester
+            .tap(find.byKey(const ValueKey('orbit-center-self-avatar')))
+            .timeout(deadline);
+        await pumpOrbitFrames(tester, count: 8).timeout(deadline);
+        await tester
+            .tap(
+              find.descendant(
+                of: find.byKey(const ValueKey('you-thought-you-live')),
+                matching: find.byKey(const ValueKey('you-tag-walks')),
+              ),
+            )
+            .timeout(deadline);
+        await pumpOrbitFrames(tester, count: 8).timeout(deadline);
+        await tester
+            .tap(find.byKey(const ValueKey('you-composer')))
+            .timeout(deadline);
+        await pumpOrbitFrames(tester, count: 8).timeout(deadline);
+        expect(
+          tester.widget<TextField>(field).controller!.text,
+          launch == 'retained' ? 'Half a thought #walks ' : '#walks ',
+        );
+        if (launch == 'edited') {
+          await tester.enterText(field, '#walks After work').timeout(deadline);
+          await tester.pump().timeout(deadline);
+        }
+
+        final header = find.descendant(
+          of: composer,
+          matching: find.text('New thought'),
+        );
+        await tester
+            .fling(header, const Offset(0, 320), 1200)
+            .timeout(deadline);
+        await pumpOrbitFrames(tester, count: 6).timeout(deadline);
+        final prompt = find.text('Discard this thought?');
+        if (launch == 'untouched') {
+          expect(prompt, findsNothing);
+          expect(composer, findsNothing);
+        } else {
+          expect(prompt, findsOneWidget);
+          await tester.tap(find.text('Keep editing')).timeout(deadline);
+          await pumpOrbitFrames(tester, count: 6).timeout(deadline);
+          expect(composer, findsOneWidget);
+          expect(
+            tester.widget<TextField>(field).controller!.text,
+            launch == 'retained'
+                ? 'Half a thought #walks '
+                : '#walks After work',
+          );
+        }
+
+        await tester.pumpWidget(const SizedBox.shrink()).timeout(deadline);
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(seconds: 1)).timeout(deadline);
+        }
+      });
+    }
+
     testWidgets('a voice note removed from a tag-started draft stays removed', (
       tester,
     ) async {
