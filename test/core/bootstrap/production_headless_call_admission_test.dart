@@ -1025,12 +1025,12 @@ void main() {
         for (final scenario in [
           'partial',
           'deferred',
-          'wrong expiry',
+          'different valid expiry',
           'multiple',
         ]) {
           var replies = 0;
-          final pending = scenario == 'wrong expiry'
-              ? _event(expiresAtMs: failureInvocation.expiresAtMs + 1)
+          final pending = scenario == 'different valid expiry'
+              ? _event(expiresAtMs: failureInvocation.expiresAtMs - 1)
               : _event();
           final mailbox = _Mailbox([
             pending,
