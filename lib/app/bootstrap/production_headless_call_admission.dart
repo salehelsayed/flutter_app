@@ -110,6 +110,33 @@ typedef AuthenticateHeadlessMailboxEvent =
       required CallMailboxEvent event,
     });
 
+AuthenticateHeadlessMailboxEvent createProductionHeadlessMailboxAuthenticator({
+  required SecureCallEnvelopeCodec codec,
+  required CallTrustedRosterProvider roster,
+  required CallLocalAuthorityProvider localAuthorityProvider,
+  bool videoEnabled = false,
+}) {
+  final admission = IncomingCallPrePresentationAdmission(
+    codec: codec,
+    trustedRosterProvider: roster,
+    localAuthorityProvider: localAuthorityProvider,
+    videoEnabled: videoEnabled,
+  );
+  return ({required invocation, required event}) async {
+    // The legacy entrypoint only accepts V1, even with V2 decoding enabled.
+    final authenticated = await admission.authenticateMailboxEvent(
+      nativeCallId: invocation.callId,
+      wakeExpiresAtMs: invocation.expiresAtMs,
+      event: event,
+    );
+    return HeadlessAuthenticatedMailboxEvent(
+      event: authenticated.signal.event,
+      rollbackReplay: authenticated.rollbackReplay,
+      signal: authenticated.signal,
+    );
+  };
+}
+
 /// Sends the caller one `reject` for [invite] under [callHandle], the mailbox
 /// handle the invite row was retrieved with (the caller keys its context by
 /// it, not by the call id). Resolves true once the reject reached custody
@@ -1049,29 +1076,17 @@ final class AndroidProductionHeadlessCallAdmissionBackend
       loadSigningPrivateKey: () async => identity.privateKey,
       nowMs: nowMs,
     );
-    final admission = IncomingCallPrePresentationAdmission(
-      codec: codec,
-      trustedRosterProvider: roster,
-      localAuthorityProvider: () async => CallLocalDeviceAuthority(
-        accountPeerId: identity.peerId,
-        devicePeerId: physicalPeerId,
-        mlKemSecretKey: identity.mlKemSecretKey!,
-      ),
-    );
     final session = MailboxProductionHeadlessCallAdmissionSession(
       mailboxClient: mailbox,
-      authenticateEvent: ({required invocation, required event}) async {
-        final authenticated = await admission.authenticateMailboxEvent(
-          nativeCallId: invocation.callId,
-          wakeExpiresAtMs: invocation.expiresAtMs,
-          event: event,
-        );
-        return HeadlessAuthenticatedMailboxEvent(
-          event: authenticated.signal.event,
-          rollbackReplay: authenticated.rollbackReplay,
-          signal: authenticated.signal,
-        );
-      },
+      authenticateEvent: createProductionHeadlessMailboxAuthenticator(
+        codec: codec,
+        roster: roster,
+        localAuthorityProvider: () async => CallLocalDeviceAuthority(
+          accountPeerId: identity.peerId,
+          devicePeerId: physicalPeerId,
+          mlKemSecretKey: identity.mlKemSecretKey!,
+        ),
+      ),
       declineReplySender: (invite, callHandle) =>
           declineReply.sendDeclineFor(invite, callHandle: callHandle),
       ringingReplySender: (invite, callHandle) =>
