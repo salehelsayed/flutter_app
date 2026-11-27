@@ -514,11 +514,19 @@ void main() {
 
           expect(tester.view.viewInsets.bottom, 0);
           expect(find.byType(IntroBanner), findsOneWidget);
-          expect(tester.takeException(), isNull);
           final composer = find.bySemanticsIdentifier('chat_composer');
-          expect(composer, findsOneWidget);
           final field = find.byType(TextField);
           final fieldBounds = tester.getRect(field);
+          final fieldVisible = fieldBounds.intersect(Offset.zero & viewport);
+          expect(
+            tester.takeException(),
+            isNull,
+            reason:
+                'Composer bounds $fieldBounds, visible $fieldVisible, '
+                'semantic nodes ${composer.evaluate().length}, '
+                'hit targets ${field.hitTestable().evaluate().length}',
+          );
+          expect(composer, findsOneWidget);
           expect(fieldBounds.height, greaterThanOrEqualTo(44));
           expect(fieldBounds.bottom, lessThanOrEqualTo(viewport.height));
 
