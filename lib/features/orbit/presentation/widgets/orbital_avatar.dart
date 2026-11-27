@@ -239,7 +239,9 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
           scale: widget.riseUp ? (0.4 + 0.6 * v) : (0.9 + 0.1 * v),
           child: Opacity(opacity: v, child: child),
         );
-        if (!widget.riseUp) return scaled;
+        if (!widget.riseUp) {
+          return IgnorePointer(ignoring: v == 0, child: scaled);
+        }
         // Slide up from below toward the user as it appears.
         final rise = widget.size * 0.9 * (1 - v);
         return Transform.translate(offset: Offset(0, rise), child: scaled);
