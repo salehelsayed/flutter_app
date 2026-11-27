@@ -294,6 +294,7 @@ class GroupRow extends StatelessWidget {
 
     final identifiedCard = Semantics(
       identifier: 'orbit.group.${group.groupId}',
+      button: true,
       customSemanticsActions: customSemanticsActions,
       child: card,
     );

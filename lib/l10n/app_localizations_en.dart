@@ -3269,6 +3269,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get orbit_archive_action => 'Archive';
 
   @override
+  String orbit_open_contact_profile(String name) {
+    return 'View profile of $name';
+  }
+
+  @override
   String get orbit_unarchive_action => 'Unarchive';
 
   @override

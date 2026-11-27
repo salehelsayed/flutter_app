@@ -5444,6 +5444,12 @@ abstract class AppLocalizations {
   /// **'Archive'**
   String get orbit_archive_action;
 
+  /// Accessibility label for the named Orbit contact profile button
+  ///
+  /// In en, this message translates to:
+  /// **'View profile of {name}'**
+  String orbit_open_contact_profile(String name);
+
   /// No description provided for @orbit_unarchive_action.
   ///
   /// In en, this message translates to:
