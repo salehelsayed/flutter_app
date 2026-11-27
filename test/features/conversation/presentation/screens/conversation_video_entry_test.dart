@@ -564,7 +564,8 @@ void main() {
         await tester.tap(find.text('Video call')).timeout(bound);
         await tester.pump().timeout(bound);
         await tester.pump(const Duration(milliseconds: 400)).timeout(bound);
-        expect(find.byType(SimpleDialog), findsNothing);
+        expect(find.text('Voice call'), findsNothing);
+        expect(find.text('Video call'), findsNothing);
         expect(find.byTooltip('Starting video call'), findsOneWidget);
         header.onCall!();
         await tester.pump().timeout(bound);

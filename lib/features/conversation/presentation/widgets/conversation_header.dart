@@ -19,6 +19,7 @@ class ConversationHeader extends StatelessWidget {
   final VoidCallback? onOverflow;
   final VoidCallback? onCall;
   final VoidCallback? onCallRetry;
+  final Key? callButtonKey;
 
   /// Opens in-chat search; no magnifier without it.
   final VoidCallback? onSearch;
@@ -46,6 +47,7 @@ class ConversationHeader extends StatelessWidget {
     this.onAvatarTap,
     this.onCall,
     this.onCallRetry,
+    this.callButtonKey,
     this.onSearch,
     this.translateAction,
     this.introPromoAction,
@@ -75,6 +77,7 @@ class ConversationHeader extends StatelessWidget {
     final actions = <Widget>[
       if (showCallAction)
         _ConversationCallAction(
+          buttonKey: callButtonKey,
           enabled: callActionEnabled && onCall != null,
           offersMediaChoice: callActionOffersMediaChoice,
           inFlight: callActionInFlight,
@@ -261,6 +264,7 @@ class ConversationHeader extends StatelessWidget {
 
 class _ConversationCallAction extends StatelessWidget {
   const _ConversationCallAction({
+    this.buttonKey,
     required this.enabled,
     required this.offersMediaChoice,
     required this.inFlight,
@@ -270,6 +274,7 @@ class _ConversationCallAction extends StatelessWidget {
     this.onRetry,
   });
 
+  final Key? buttonKey;
   final bool enabled;
   final bool offersMediaChoice;
   final bool inFlight;
@@ -314,6 +319,7 @@ class _ConversationCallAction extends StatelessWidget {
           : null,
       excludeSemantics: true,
       child: IconButton(
+        key: buttonKey,
         tooltip: tooltip,
         onPressed: enabled
             ? onCall
