@@ -10,6 +10,36 @@ import org.junit.Test
 
 class PendingNativeCallStoreTest {
     @Test
+    fun `fresh native runtime presents a new call after the old ringing owner dies`() {
+        val backend = InMemoryPendingNativeCallBackend()
+        val firstPlatform = LifecycleFakePlatform(mutableListOf())
+        val first = lifecycle(store(backend), firstPlatform)
+        assertEquals(MknoonCallPresentationResult.PRESENTED, first.present(payloadA()))
+        assertEquals(1, firstPlatform.showIncomingCalls)
+
+        val nextPlatform = LifecycleFakePlatform(mutableListOf())
+        val restarted = lifecycle(store(backend), nextPlatform)
+        assertEquals(MknoonCallPresentationResult.PRESENTED, restarted.present(payloadB()))
+        assertEquals(NATIVE_CALL_ID_B, restarted.activeNativeCallId())
+        assertEquals(1, nextPlatform.registerCalls)
+        assertEquals(1, nextPlatform.showIncomingCalls)
+        assertEquals(MknoonCallPresentationResult.DUPLICATE, restarted.present(payloadA()))
+    }
+
+    @Test
+    fun `live ringing owner keeps its call when another invite arrives`() {
+        val platform = LifecycleFakePlatform(mutableListOf())
+        val controller = lifecycle(store(InMemoryPendingNativeCallBackend()), platform)
+
+        assertEquals(MknoonCallPresentationResult.PRESENTED, controller.present(payloadA()))
+        assertEquals(MknoonCallPresentationResult.BUSY, controller.present(payloadB()))
+        assertEquals(MknoonCallPresentationResult.DUPLICATE, controller.present(payloadA()))
+        assertEquals(NATIVE_CALL_ID_A, controller.activeNativeCallId())
+        assertEquals(1, platform.registerCalls)
+        assertEquals(1, platform.showIncomingCalls)
+    }
+
+    @Test
     fun `observation leaves AtomicFile sidecars untouched and refuses ambiguous or oversized bytes`() {
         val folder = kotlin.io.path.createTempDirectory("journal-observation").toFile()
         try {
@@ -687,6 +717,18 @@ class PendingNativeCallStoreTest {
         )
         assertEquals(0, readFailure.replaceCalls)
     }
+
+    private fun lifecycle(
+        store: PendingNativeCallStore,
+        platform: LifecycleFakePlatform,
+    ) = MknoonCallLifecycleController(
+        store = store,
+        platform = platform,
+        eventSink = LifecycleFakeEventSink(mutableListOf()),
+        capabilityEnabled = { true },
+        recordAudioPermissionGranted = { true },
+        nowMs = { NOW_MS },
+    )
 
     private fun store(
         backend: PendingNativeCallBackend,
