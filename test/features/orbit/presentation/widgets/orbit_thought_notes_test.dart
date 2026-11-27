@@ -971,8 +971,6 @@ void main() {
   testWidgets('collapsed overflow reports only live hidden Thoughts', (
     tester,
   ) async {
-    final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
     final initialClock = tester.binding.clock.now();
     DateTime now() =>
         start.add(tester.binding.clock.now().difference(initialClock));
@@ -1008,8 +1006,6 @@ void main() {
   testWidgets(
     'expanded overflow offers a separate Thought action until expiry',
     (tester) async {
-      final semantics = tester.ensureSemantics();
-      addTearDown(semantics.dispose);
       final initialClock = tester.binding.clock.now();
       DateTime now() =>
           start.add(tester.binding.clock.now().difference(initialClock));

@@ -15683,11 +15683,10 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   call-button pattern: an explicit localized semantics label and activation,
   retained tooltip, and excluded child semantics. Decorative dots ignore
   pointer events so they cannot steal a tap.
-  Widget tests enable semantics by default. Use the binding's handle for
-  ordinary label assertions. Dispose a separately acquired `ensureSemantics()`
-  handle in `finally` before returning. End-of-test verification precedes
-  `addTearDown`; the BL-107 label fixture pair `b5d4511bd` and `19eb91905`
-  verifies the default handle path. The BL-25 proof used
+  Widget tests enable semantics by default.
+  Never dispose a `SemanticsHandle` via `addTearDown`. Dispose it inside the test body or use the binding's semantics.
+  Flutter verifies handles before `addTearDown`. The BL-107 label fixture pair
+  `b5d4511bd` and `19eb91905` verifies the default handle path. The BL-25 proof used
   `BackgroundPreference.daylightLagoon` for its light conversation fixture.
   As of BL-107, supply `AppTheme.lightTheme` to select the conversation's
   light palette for any wallpaper. Standalone fixtures without an app theme extension
