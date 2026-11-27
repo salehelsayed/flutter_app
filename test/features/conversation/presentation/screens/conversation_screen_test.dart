@@ -2712,6 +2712,50 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('large text draft scrolls above a landscape keyboard', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    const draft = 'First line\nSecond line';
+    tester.view.devicePixelRatio = 2.625;
+    tester.view.physicalSize = const Size(2048, 924);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 587);
+    tester.view.padding = const FakeViewPadding(top: 63);
+    addTearDown(tester.view.reset);
+    final sent = <String>[];
+
+    await tester
+        .pumpWidget(
+          buildTestWidget(
+            initialLoadDone: true,
+            messages: [makeMessage(text: 'Landscape message')],
+            textScaler: const TextScaler.linear(3.1),
+            onSend: sent.add,
+          ),
+        )
+        .timeout(deadline);
+
+    final field = find.byType(TextField);
+    await tester.enterText(field, draft).timeout(deadline);
+    await tester.pump(const Duration(milliseconds: 300)).timeout(deadline);
+
+    expect(tester.takeException(), isNull);
+    final editable = tester
+        .state<EditableTextState>(find.byType(EditableText))
+        .renderEditable;
+    expect(editable.size.height, lessThan(2 * editable.preferredLineHeight));
+    expect(editable.offset.pixels, greaterThan(0));
+    expect(tester.widget<TextField>(field).controller!.text, draft);
+
+    final l10n = AppLocalizations.of(tester.element(field))!;
+    final send = find.byTooltip(l10n.action_send_message);
+    final hitArea = tester.getRect(send);
+    expect(hitArea.size.shortestSide, greaterThanOrEqualTo(44));
+    expect(hitArea.bottom, lessThanOrEqualTo((924 - 587) / 2.625 + 0.1));
+    await tester.tap(send).timeout(deadline);
+    expect(sent, [draft]);
+  });
+
   testWidgets('a staged photo and the keyboard still fit a short viewport', (
     tester,
   ) async {
