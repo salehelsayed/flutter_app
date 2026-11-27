@@ -2321,7 +2321,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/smoke_test.dart": "874b2ad29f542e4c69d481960f9d4909799c3cc5f3db5076172907a26d8c6309"
+        "integration_test/smoke_test.dart": "3440b3f3305b200517266f4d43ead39f646e517ab705805f748a7378b2a9a134"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -2351,7 +2351,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/soak_e2e_test.dart": "cfd684913194ff8cd37b7d7567639984bf77732e3a0c985d40164b77915bed17"
+        "integration_test/soak_e2e_test.dart": "84c293e58b634ef58da237398ea35f030e544d77775e558658f1d69baf6bbd94"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -2381,7 +2381,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/transport_e2e_test.dart": "3fd95bc0e068d2ff472611d5db7a0d52d0a876bfd5cd1dec0a36382d9826a74a"
+        "integration_test/transport_e2e_test.dart": "df37d732d9a6bff3f6b484ee607e78b0793e668edc5f36770aa5aebb6b9f9fbc"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -4086,7 +4086,7 @@
       ],
       "sources": {
         "integration_test/scripts/run_notification_open_during_other_chat.dart": "89adce3e3159c3a9c577775b2f6fc688c64d80ff6cbdd78cbe3faa6b57ff3bc0",
-        "integration_test/notification_open_during_other_chat_harness.dart": "7a2a1baf6f3ff5914c5e80d1462992d94f2695a9ad616e98e559ae70d62443b4"
+        "integration_test/notification_open_during_other_chat_harness.dart": "afae1e72cc0f8c4c40afc02555df01d8859375bf2956be1cbfe09ae294b4f92e"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4167,7 +4167,7 @@
       ],
       "sources": {
         "integration_test/scripts/run_routing_smoke_e2e.dart": "03ab8d84c04ff7e5f32c5f690b2ca3c559d84869136859ddf00c238d8b777c43",
-        "integration_test/routing_smoke_harness.dart": "5ca35be16b6fa41f379e48ef2a45791ef5b1e3255160ab5d4291856485ca3930",
+        "integration_test/routing_smoke_harness.dart": "841633e9c9f1741fe0bf641f322195f73a3275f0b47d01b242a46f1fb40c55fb",
         "integration_test/scripts/routing_smoke_group_criteria.dart": "16d8108231855fb8f7f0c402bd61a32f29f8ad3262c947daee3ea962c443a92c"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
@@ -4194,7 +4194,7 @@
       ],
       "sources": {
         "integration_test/scripts/run_soak_e2e.dart": "b1c19eac569fa2c7c99143dc25f3cc569646c5c62ddac1b1a41acc4d4349ef22",
-        "integration_test/soak_e2e_test.dart": "cfd684913194ff8cd37b7d7567639984bf77732e3a0c985d40164b77915bed17",
+        "integration_test/soak_e2e_test.dart": "84c293e58b634ef58da237398ea35f030e544d77775e558658f1d69baf6bbd94",
         "integration_test/_support/prepared_ios_harness.dart": "14e023e7be36401f94f26b681846f4177bef999e9993d714fc44f85643af3892"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
@@ -4224,7 +4224,7 @@
       ],
       "sources": {
         "integration_test/scripts/run_transport_e2e.dart": "fd271fdc673571a4a3d31633e29f0408f595618ec81bddbbceb4efb892f73070",
-        "integration_test/transport_e2e_test.dart": "3fd95bc0e068d2ff472611d5db7a0d52d0a876bfd5cd1dec0a36382d9826a74a",
+        "integration_test/transport_e2e_test.dart": "df37d732d9a6bff3f6b484ee607e78b0793e668edc5f36770aa5aebb6b9f9fbc",
         "go-mknoon/cmd/testpeer/envelope.go": "0a56b0cbee76731081d27cc477873615b3e441a3008ef1e91e248a2c4f979a25"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
