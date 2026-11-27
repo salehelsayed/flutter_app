@@ -73,11 +73,17 @@ void main() {
         home: Scaffold(body: child),
       );
 
-  // OrbitalAvatar uses Future.delayed for staggered animations,
-  // and OverflowBadge uses Future.delayed(1000ms). We must pump
-  // past all timers to avoid "pending timer" test failures.
   Future<void> pumpPastAnimations(WidgetTester tester) async {
-    await tester.pumpAndSettle();
+    // The overflow badge has a one-second entrance delay. The shorter avatar
+    // entrance leaves a gap with no scheduled frames before that timer fires.
+    if (find.byType(OverflowBadge).evaluate().isNotEmpty) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 3),
+    );
   }
 
   // 194 — bounded pumps for LIT-node tests. A lit node hosts the messenger-orbit

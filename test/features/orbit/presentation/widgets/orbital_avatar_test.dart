@@ -21,6 +21,8 @@ void main() {
           ),
         ),
       ).timeout(deadline);
+      // The zero-delay stagger callback starts the ticker for the next frame.
+      await tester.pump().timeout(deadline);
       await tester.pump().timeout(deadline);
       final avatar = find.byType(OrbitalAvatar);
       final scale = find.descendant(
