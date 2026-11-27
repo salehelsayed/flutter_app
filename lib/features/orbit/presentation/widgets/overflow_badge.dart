@@ -13,6 +13,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 /// It NEVER opens a chat (INV-1).
 class OverflowBadge extends StatefulWidget {
   final int count;
+  final int hiddenThoughtCount;
 
   /// True while the overflow arcs are revealed — swaps "+N" for a chevron and
   /// switches the Semantics label to the collapse affordance.
@@ -24,6 +25,7 @@ class OverflowBadge extends StatefulWidget {
   const OverflowBadge({
     super.key,
     required this.count,
+    this.hiddenThoughtCount = 0,
     this.expanded = false,
     this.onTap,
   });
@@ -74,6 +76,7 @@ class _OverflowBadgeState extends State<OverflowBadge>
 
   @override
   Widget build(BuildContext context) {
+    final showThoughts = !widget.expanded && widget.hiddenThoughtCount > 0;
     final readableColors = context.backgroundReadableColors;
     final surfaceColor = readableColors.isLightSurface
         ? readableColors.surfaceSubtle.withValues(alpha: 0.82)
@@ -82,7 +85,7 @@ class _OverflowBadgeState extends State<OverflowBadge>
       alpha: readableColors.isLightSurface ? 0.28 : 0.20,
     );
 
-    final visual = ClipOval(
+    final badge = ClipOval(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
         child: Container(
@@ -115,6 +118,32 @@ class _OverflowBadgeState extends State<OverflowBadge>
         ),
       ),
     );
+    final visual = showThoughts
+        ? Stack(
+            clipBehavior: Clip.none,
+            children: [
+              badge,
+              PositionedDirectional(
+                top: -5,
+                end: -5,
+                width: 14,
+                height: 14,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: surfaceColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: borderColor),
+                  ),
+                  child: Icon(
+                    Icons.more_horiz,
+                    size: 12,
+                    color: readableColors.textPrimary,
+                  ),
+                ),
+              ),
+            ],
+          )
+        : badge;
 
     // 44pt hit target: a −8px inset around the 28px visual. The Semantics label
     // is localized + plural; the badge is a button, never a chat entry.
@@ -126,6 +155,9 @@ class _OverflowBadgeState extends State<OverflowBadge>
         label: widget.expanded
             ? l10n.orbit_overflow_badge_collapse
             : l10n.orbit_overflow_badge_open(widget.count),
+        value: showThoughts
+            ? l10n.you_page_tag_count(widget.hiddenThoughtCount)
+            : null,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
