@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_circle.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
 
 /// The X control for closing the Orbit screen: the shared [OrbitControlCircle].
 class OrbitCloseButton extends StatelessWidget {
@@ -12,12 +14,18 @@ class OrbitCloseButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
 
-    return GestureDetector(
-      onTap: onTap,
-      child: OrbitControlCircle.custom(
-        child: SizedBox.expand(
-          child: CustomPaint(
-            painter: _XPainter(color: readableColors.chromeInk),
+    return ActionSemantics(
+      label:
+          AppLocalizations.of(context)?.a11y_close_orbit ??
+          MaterialLocalizations.of(context).closeButtonTooltip,
+      enabled: true,
+      child: GestureDetector(
+        onTap: onTap,
+        child: OrbitControlCircle.custom(
+          child: SizedBox.expand(
+            child: CustomPaint(
+              painter: _XPainter(color: readableColors.chromeInk),
+            ),
           ),
         ),
       ),

@@ -21,6 +21,24 @@ class AppLocalizationsAr extends AppLocalizations {
   String get nav_orbit => 'الدائرة';
 
   @override
+  String get a11y_remove_attachment => 'إزالة المرفق';
+
+  @override
+  String get a11y_close_orbit => 'إغلاق المدار';
+
+  @override
+  String get a11y_like_post => 'إعجاب';
+
+  @override
+  String get a11y_remove_post_like => 'إلغاء الإعجاب';
+
+  @override
+  String get a11y_open_post_comments => 'فتح التعليقات';
+
+  @override
+  String get a11y_pin_post => 'تثبيت المنشور';
+
+  @override
   String get onboarding_new_here => 'أنا جديد هنا';
 
   @override

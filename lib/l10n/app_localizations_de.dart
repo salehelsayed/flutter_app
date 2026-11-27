@@ -21,6 +21,24 @@ class AppLocalizationsDe extends AppLocalizations {
   String get nav_orbit => 'Kreis';
 
   @override
+  String get a11y_remove_attachment => 'Anhang entfernen';
+
+  @override
+  String get a11y_close_orbit => 'Orbit schließen';
+
+  @override
+  String get a11y_like_post => 'Gefällt mir';
+
+  @override
+  String get a11y_remove_post_like => '„Gefällt mir“ entfernen';
+
+  @override
+  String get a11y_open_post_comments => 'Kommentare öffnen';
+
+  @override
+  String get a11y_pin_post => 'Beitrag anpinnen';
+
+  @override
   String get onboarding_new_here => 'Ich bin neu hier';
 
   @override

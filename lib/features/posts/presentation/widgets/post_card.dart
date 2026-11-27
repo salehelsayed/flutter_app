@@ -9,6 +9,7 @@ import 'package:flutter_app/features/posts/domain/models/post_media_attachment_m
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_repost_visual_state.dart';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -251,6 +252,9 @@ class PostCard extends StatelessWidget {
                           _MetricAction(
                             icon: Icons.favorite_border,
                             onTap: resolvedToggleHeart,
+                            semanticsLabel: post.viewerHasHearted
+                                ? l10n.a11y_remove_post_like
+                                : l10n.a11y_like_post,
                             color: post.viewerHasHearted
                                 ? _friendBadgeColor
                                 : mutedActionColor,
@@ -263,6 +267,7 @@ class PostCard extends StatelessWidget {
                           _MetricAction(
                             icon: Icons.mode_comment_outlined,
                             onTap: resolvedOpenComments,
+                            semanticsLabel: l10n.a11y_open_post_comments,
                             color: mutedActionColor,
                             label: post.commentCount.toString(),
                             labelKey: const ValueKey<String>(
@@ -275,6 +280,7 @@ class PostCard extends StatelessWidget {
                             _MetricAction(
                               icon: Icons.repeat,
                               onTap: resolvedPassAlong,
+                              semanticsLabel: l10n.post_pass_along_title,
                               color: resolvedRepostVisualState.isActive
                                   ? _friendBadgeColor
                                   : mutedActionColor,
@@ -307,6 +313,7 @@ class PostCard extends StatelessWidget {
                       _MetricAction(
                         icon: Icons.bookmark_border,
                         onTap: resolvedPinPost,
+                        semanticsLabel: l10n.a11y_pin_post,
                         color: disabledActionColor,
                         iconSize: 14,
                       ),
@@ -760,6 +767,7 @@ class _MetricAction extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;
   final Color color;
+  final String semanticsLabel;
   final String? label;
   final Key? labelKey;
   final double iconSize;
@@ -769,6 +777,7 @@ class _MetricAction extends StatelessWidget {
     required this.icon,
     required this.onTap,
     required this.color,
+    required this.semanticsLabel,
     this.label,
     this.labelKey,
     this.iconSize = 15,
@@ -782,35 +791,39 @@ class _MetricAction extends StatelessWidget {
         ? readableColors.disabledForeground
         : color;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-          child: Center(
-            widthFactor: 1,
-            heightFactor: 1,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, size: iconSize, color: resolvedColor),
-                  if (label != null) ...[
-                    const SizedBox(width: 6),
-                    Text(
-                      label!,
-                      key: labelKey,
-                      style: TextStyle(
-                        color: resolvedColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
+    return ActionSemantics(
+      label: semanticsLabel,
+      enabled: onTap != null,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(999),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+            child: Center(
+              widthFactor: 1,
+              heightFactor: 1,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: iconSize, color: resolvedColor),
+                    if (label != null) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        label!,
+                        key: labelKey,
+                        style: TextStyle(
+                          color: resolvedColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),

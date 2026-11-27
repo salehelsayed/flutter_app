@@ -20,6 +20,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbit_control_ci
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_edit_handle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
 
 /// 198 "Sculpt & Summon" — the interactive Inner-Circle surface. Owns all
 /// SESSION-TRANSIENT state (overflow expansion, labels, the edit session +
@@ -1368,7 +1369,7 @@ class _InnerCircleInteractiveSurfaceState
                   constraints: const BoxConstraints(minHeight: 56),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
-                    vertical: 12,
+                    vertical: 6,
                   ),
                   decoration: BoxDecoration(
                     color: colors.glassSurface,
@@ -1408,19 +1409,22 @@ class _InnerCircleInteractiveSurfaceState
                       // 205 item 1: a discoverable close X — collapse the pill and
                       // dismiss the keyboard, so the user never depends on the
                       // undiscoverable background tap.
-                      GestureDetector(
-                        key: const ValueKey('orbit-find-close'),
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _closeFind,
-                        child: Semantics(
-                          button: true,
-                          label: l10n.orbit_find_close,
-                          child: Padding(
-                            padding: const EdgeInsets.only(left: 8),
-                            child: Icon(
-                              Icons.close,
-                              size: 20,
-                              color: colors.iconPrimary,
+                      ActionSemantics(
+                        label: l10n.orbit_find_close,
+                        enabled: true,
+                        child: GestureDetector(
+                          key: const ValueKey('orbit-find-close'),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _closeFind,
+                          child: SizedBox.square(
+                            dimension: 44,
+                            child: Align(
+                              alignment: AlignmentDirectional.centerEnd,
+                              child: Icon(
+                                Icons.close,
+                                size: 20,
+                                color: colors.iconPrimary,
+                              ),
                             ),
                           ),
                         ),

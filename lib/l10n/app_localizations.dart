@@ -124,6 +124,42 @@ abstract class AppLocalizations {
   /// **'Orbit'**
   String get nav_orbit;
 
+  /// No description provided for @a11y_remove_attachment.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove attachment'**
+  String get a11y_remove_attachment;
+
+  /// No description provided for @a11y_close_orbit.
+  ///
+  /// In en, this message translates to:
+  /// **'Close Orbit'**
+  String get a11y_close_orbit;
+
+  /// No description provided for @a11y_like_post.
+  ///
+  /// In en, this message translates to:
+  /// **'Like'**
+  String get a11y_like_post;
+
+  /// No description provided for @a11y_remove_post_like.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove like'**
+  String get a11y_remove_post_like;
+
+  /// No description provided for @a11y_open_post_comments.
+  ///
+  /// In en, this message translates to:
+  /// **'Open comments'**
+  String get a11y_open_post_comments;
+
+  /// No description provided for @a11y_pin_post.
+  ///
+  /// In en, this message translates to:
+  /// **'Pin post'**
+  String get a11y_pin_post;
+
   /// No description provided for @onboarding_new_here.
   ///
   /// In en, this message translates to:

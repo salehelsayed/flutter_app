@@ -4,6 +4,7 @@ import 'package:flutter_app/core/media/media_mime.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 
 /// Horizontal thumbnail strip shown above the compose area when
@@ -300,26 +301,30 @@ class _Thumbnail extends StatelessWidget {
             Positioned(
               top: 0,
               right: 0,
-              child: GestureDetector(
-                onTap: onRemove,
-                behavior: HitTestBehavior.opaque,
-                child: SizedBox.square(
-                  dimension: 44,
-                  child: Align(
-                    alignment: Alignment.topRight,
-                    child: Transform.translate(
-                      offset: const Offset(6, -6),
-                      child: Container(
-                        width: 22,
-                        height: 22,
-                        decoration: const BoxDecoration(
-                          color: Color.fromRGBO(0, 0, 0, 0.7),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.close,
-                          size: 14,
-                          color: Colors.white,
+              child: ActionSemantics(
+                label: AppLocalizations.of(context)!.a11y_remove_attachment,
+                enabled: true,
+                child: GestureDetector(
+                  onTap: onRemove,
+                  behavior: HitTestBehavior.opaque,
+                  child: SizedBox.square(
+                    dimension: 44,
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: Transform.translate(
+                        offset: const Offset(6, -6),
+                        child: Container(
+                          width: 22,
+                          height: 22,
+                          decoration: const BoxDecoration(
+                            color: Color.fromRGBO(0, 0, 0, 0.7),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.close,
+                            size: 14,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ),

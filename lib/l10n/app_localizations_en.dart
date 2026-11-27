@@ -21,6 +21,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get nav_orbit => 'Orbit';
 
   @override
+  String get a11y_remove_attachment => 'Remove attachment';
+
+  @override
+  String get a11y_close_orbit => 'Close Orbit';
+
+  @override
+  String get a11y_like_post => 'Like';
+
+  @override
+  String get a11y_remove_post_like => 'Remove like';
+
+  @override
+  String get a11y_open_post_comments => 'Open comments';
+
+  @override
+  String get a11y_pin_post => 'Pin post';
+
+  @override
   String get onboarding_new_here => 'I\'m new here';
 
   @override

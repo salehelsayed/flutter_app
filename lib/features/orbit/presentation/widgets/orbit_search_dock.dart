@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
 
 /// Bottom-docked search input panel that slides up from the bottom.
 ///
@@ -27,6 +28,7 @@ class OrbitSearchDock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
 
     return Container(
@@ -69,9 +71,7 @@ class OrbitSearchDock extends StatelessWidget {
                             color: readableColors.textPrimary,
                           ),
                           decoration: InputDecoration(
-                            hintText: AppLocalizations.of(
-                              context,
-                            )!.orbit_search,
+                            hintText: l10n.orbit_search,
                             hintStyle: TextStyle(
                               fontSize: 15,
                               color: readableColors.placeholderText,
@@ -89,23 +89,27 @@ class OrbitSearchDock extends StatelessWidget {
                       ),
                       // Clear button (only when query is non-empty)
                       if (query.isNotEmpty)
-                        GestureDetector(
-                          onTap: onClear,
-                          behavior: HitTestBehavior.opaque,
-                          child: SizedBox.square(
-                            dimension: 44,
-                            child: Center(
-                              child: Container(
-                                width: 28,
-                                height: 28,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: readableColors.disabledSurface,
-                                ),
-                                child: Icon(
-                                  Icons.close,
-                                  size: 16,
-                                  color: readableColors.iconMuted,
+                        ActionSemantics(
+                          label: l10n.calls_clear_search,
+                          enabled: true,
+                          child: GestureDetector(
+                            onTap: onClear,
+                            behavior: HitTestBehavior.opaque,
+                            child: SizedBox.square(
+                              dimension: 44,
+                              child: Center(
+                                child: Container(
+                                  width: 28,
+                                  height: 28,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: readableColors.disabledSurface,
+                                  ),
+                                  child: Icon(
+                                    Icons.close,
+                                    size: 16,
+                                    color: readableColors.iconMuted,
+                                  ),
                                 ),
                               ),
                             ),
@@ -119,24 +123,28 @@ class OrbitSearchDock extends StatelessWidget {
               const SizedBox(width: 10),
 
               // Close button
-              GestureDetector(
-                onTap: onClose,
-                behavior: HitTestBehavior.opaque,
-                child: SizedBox.square(
-                  dimension: 44,
-                  child: Center(
-                    child: Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: readableColors.surfaceRaised,
-                        border: Border.all(color: readableColors.border),
-                      ),
-                      child: Icon(
-                        Icons.close,
-                        size: 15,
-                        color: readableColors.iconSecondary,
+              ActionSemantics(
+                label: l10n.orbit_find_close,
+                enabled: true,
+                child: GestureDetector(
+                  onTap: onClose,
+                  behavior: HitTestBehavior.opaque,
+                  child: SizedBox.square(
+                    dimension: 44,
+                    child: Center(
+                      child: Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: readableColors.surfaceRaised,
+                          border: Border.all(color: readableColors.border),
+                        ),
+                        child: Icon(
+                          Icons.close,
+                          size: 15,
+                          color: readableColors.iconSecondary,
+                        ),
                       ),
                     ),
                   ),
