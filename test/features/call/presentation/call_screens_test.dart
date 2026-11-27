@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
+import 'package:flutter_app/features/call/domain/call_media.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/presentation/call_video_presentation.dart';
 import 'package:flutter_app/features/call/presentation/screens/active_call_screen.dart';
 import 'package:flutter_app/features/call/presentation/screens/incoming_call_screen.dart';
 import 'package:flutter_app/features/call/presentation/screens/outgoing_call_screen.dart';
@@ -52,6 +55,132 @@ void main() {
     onSpeaker: onSpeaker ?? () {},
     onEnd: onEnd ?? () {},
   );
+
+  group('BL-107 call action colours', () {
+    const deadline = Duration(seconds: 3);
+    const videoPresentation = CallVideoPresentation.project(
+      videoEnabled: true,
+      wireVersion: CallWireVersion.v2,
+      requestedMedia: CallMediaKind.video,
+    );
+
+    ({Color? fill, Color? glyph}) actionColours(
+      WidgetTester tester,
+      String identifier,
+    ) {
+      final action = find.byWidgetPredicate(
+        (widget) =>
+            widget is Semantics && widget.properties.identifier == identifier,
+      );
+      final icon = find.descendant(of: action, matching: find.byType(Icon));
+      expect(icon, findsOneWidget);
+      final element = tester.element(icon);
+      return (
+        fill: element.findAncestorWidgetOfExactType<Material>()?.color,
+        glyph: tester.widget<Icon>(icon).color ?? IconTheme.of(element).color,
+      );
+    }
+
+    for (final (brightness, locale) in const [
+      (Brightness.dark, Locale('en')),
+      (Brightness.light, Locale('ar')),
+    ]) {
+      Future<void> showCall(WidgetTester tester, Widget screen) async {
+        tester.platformDispatcher.platformBrightnessTestValue = brightness;
+        addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+        await tester
+            .pumpWidget(
+              MaterialApp(
+                theme: AppTheme.lightTheme,
+                darkTheme: AppTheme.darkTheme,
+                themeMode: ThemeMode.system,
+                locale: locale,
+                localizationsDelegates: AppLocalizations.localizationsDelegates,
+                supportedLocales: AppLocalizations.supportedLocales,
+                home: Scaffold(body: screen),
+              ),
+            )
+            .timeout(deadline);
+        final context = tester.element(find.byWidget(screen));
+        expect(Theme.of(context).brightness, brightness);
+        expect(
+          Directionality.of(context),
+          locale.languageCode == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+        );
+      }
+
+      const approved = (fill: Color(0xFF1A7F37), glyph: Colors.white);
+
+      testWidgets('Answer uses call green in ${brightness.name}', (
+        tester,
+      ) async {
+        await showCall(
+          tester,
+          IncomingCallScreen(
+            contactPeerId: 'alice-peer',
+            contactUsername: 'Alice',
+            state: CallState.ringing,
+            onAnswer: () {},
+            onDecline: () {},
+          ),
+        ).timeout(deadline);
+
+        expect(actionColours(tester, 'call_answer'), approved);
+      });
+
+      testWidgets(
+        'initial media choices use call green in ${brightness.name}',
+        (tester) async {
+          await showCall(
+            tester,
+            IncomingCallScreen(
+              contactPeerId: 'alice-peer',
+              contactUsername: 'Alice',
+              state: CallState.ringing,
+              onAnswer: () {},
+              onDecline: () {},
+              onUseAudioOnly: () {},
+              onAcceptVideo: () {},
+              videoPresentation: videoPresentation,
+              onVideoIntent: (_) {},
+            ),
+          ).timeout(deadline);
+
+          expect(
+            {
+              'audio': actionColours(tester, 'call_accept_audio'),
+              'video': actionColours(tester, 'call_accept_video'),
+            },
+            {'audio': approved, 'video': approved},
+          );
+        },
+      );
+
+      testWidgets('active audio toggles use call green in ${brightness.name}', (
+        tester,
+      ) async {
+        await showCall(
+          tester,
+          ActiveCallScreen(
+            contactPeerId: 'alice-peer',
+            contactUsername: 'Alice',
+            state: CallState.connected,
+            connectedAt: null,
+            now: () => DateTime.utc(2026),
+            controls: controls(isMuted: true, isSpeakerOn: true),
+          ),
+        ).timeout(deadline);
+
+        expect(
+          {
+            'mute': actionColours(tester, 'call_mute'),
+            'speaker': actionColours(tester, 'call_speaker'),
+          },
+          {'mute': approved, 'speaker': approved},
+        );
+      });
+    }
+  });
 
   group('foreground call screens', () {
     testWidgets('BL61 weak connection uses the connected status line only', (
