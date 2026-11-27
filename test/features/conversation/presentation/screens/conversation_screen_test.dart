@@ -32,6 +32,7 @@ import 'package:flutter_app/features/identity/presentation/widgets/cosmic_backgr
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_system_message.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
@@ -49,6 +50,9 @@ void main() {
     bool isLoadingMore = false,
     bool hasMoreOlderMessages = true,
     bool initialLoadDone = false,
+    bool showIntroBanner = false,
+    VoidCallback? onMakeIntroductions,
+    VoidCallback? onMaybeLater,
     bool isSyncingNewMessages = false,
     ScrollController? scrollController,
     VoidCallback? onAttach,
@@ -104,6 +108,9 @@ void main() {
           isLoadingMore: isLoadingMore,
           hasMoreOlderMessages: hasMoreOlderMessages,
           initialLoadDone: initialLoadDone,
+          showIntroBanner: showIntroBanner,
+          onMakeIntroductions: onMakeIntroductions,
+          onMaybeLater: onMaybeLater,
           isSyncingNewMessages: isSyncingNewMessages,
           onAttach: onAttach,
           pendingAttachments: pendingAttachments,
@@ -465,6 +472,80 @@ void main() {
         findsOneWidget,
       );
     });
+
+    for (final (viewport, withHistory) in [
+      (const Size(390, 844), false),
+      (const Size(390, 844), true),
+      (const Size(844, 390), false),
+      (const Size(844, 390), true),
+    ]) {
+      final landscape = viewport.width > viewport.height;
+      final orientation = landscape ? 'landscape' : 'portrait';
+      testWidgets(
+        'AX5 intro promo leaves the composer usable in $orientation, '
+        'history=$withHistory',
+        (tester) async {
+          const deadline = Duration(seconds: 3);
+          tester.view.devicePixelRatio = 3;
+          tester.view.physicalSize = viewport * 3;
+          tester.view.padding = landscape
+              ? const FakeViewPadding(bottom: 63)
+              : const FakeViewPadding(top: 180, bottom: 102);
+          addTearDown(tester.view.reset);
+
+          var introductions = 0;
+          var dismissals = 0;
+          await tester
+              .pumpWidget(
+                buildTestWidget(
+                  initialLoadDone: true,
+                  showIntroBanner: true,
+                  onMakeIntroductions: () => introductions++,
+                  onMaybeLater: () => dismissals++,
+                  textScaler: const TextScaler.linear(3.1),
+                  messages: [
+                    if (withHistory)
+                      makeMessage(text: 'Hello', transport: 'system'),
+                  ],
+                ),
+              )
+              .timeout(deadline);
+          await tester.pump(const Duration(milliseconds: 350)).timeout(deadline);
+
+          expect(tester.view.viewInsets.bottom, 0);
+          expect(find.byType(IntroBanner), findsOneWidget);
+          expect(tester.takeException(), isNull);
+          final composer = find.bySemanticsIdentifier('chat_composer');
+          expect(composer, findsOneWidget);
+          final field = find.byType(TextField);
+          final fieldBounds = tester.getRect(field);
+          expect(fieldBounds.height, greaterThanOrEqualTo(44));
+          expect(fieldBounds.bottom, lessThanOrEqualTo(viewport.height));
+
+          final l10n = AppLocalizations.of(tester.element(field))!;
+          final make = find.widgetWithText(
+            ElevatedButton,
+            l10n.intro_make_introductions,
+          );
+          final later = find.widgetWithText(TextButton, l10n.intro_maybe_later);
+          for (final action in [make, later]) {
+            await tester.ensureVisible(action).timeout(deadline);
+            await tester.pump().timeout(deadline);
+            expect(tester.getSize(action).shortestSide, greaterThanOrEqualTo(44));
+            expect(action.hitTestable(), findsOneWidget);
+            await tester.tap(action).timeout(deadline);
+          }
+          expect((introductions, dismissals), (1, 1));
+          await tester.tap(field.hitTestable()).timeout(deadline);
+          await tester.enterText(field, 'Draft').timeout(deadline);
+          await tester.pump().timeout(deadline);
+          final editable = tester.widget<EditableText>(find.byType(EditableText));
+          expect(editable.focusNode.hasFocus, isTrue);
+          expect(editable.controller.text, 'Draft');
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
 
     testWidgets(
       'shows loading shell while initial conversation page is still loading',
