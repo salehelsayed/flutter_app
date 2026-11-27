@@ -4347,6 +4347,14 @@ Keep the original baseline/fixture failure and final pair under
 `.codex-test-logs/codex-ui-german-overflow-20261112/`; broader integration belongs
 to the batch gate rather than another per-fix sweep.
 
+Orbit's BL-107 row tests measure group badges with the same 11-point style
+that renders them. Friend rows lay out the full name with ellipsis at the
+remaining inline width and use the stacked form when the fourth grapheme
+would split or disappear. The 320-point Arabic-context checks with a
+left-to-right name exercise both light and dark appearance. They failed on
+`1893c915d` after the badge grew and pass on `a2c79df7b` with the 11-point
+Inner Circle badge retained. The matched widget runs preserve the first failure.
+
 Muted call host integration must enter connected state through the real engine's
 structural readiness observation and canonical coordinator, rather than directly
 dispatching `mediaConnected`. `CallConnectionSnapshot.isMediaReady` intentionally
@@ -7241,7 +7249,11 @@ visible and cannot become an ordinary first-attempt PASS.
   before handing it to the platform player. The audio widget regression keeps
   the same state mounted across durable commit, preserves exact source bytes,
   and covers recovery from an earlier load failure. Its fake player checks
-  file existence and playback dispatch, not native codec decoding. BL-101 holds
+  file existence and playback dispatch, not native codec decoding. For the
+  BL-107 hit-area assertion, wait for the mounted `renderedSemanticsLabel`
+  readiness marker after source load. Then check both edge hit paths and the
+  actual play and pause calls. The matched `818b70428` and `b8dc989ca` fixtures
+  distinguish the loaded 32-point baseline from the 44-point control. BL-101 holds
   the first native init reply after the platform registers its player ID, then
   replaces the source on the mounted row. The previous ordering interrupted
   initialization and attempted to register the same ID again. The regression
@@ -15602,9 +15614,11 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   call-button pattern: an explicit localized semantics label and activation,
   retained tooltip, and excluded child semantics. Decorative dots ignore
   pointer events so they cannot steal a tap.
-  Widget tests must dispose an `ensureSemantics()` handle before returning;
-  use `try/finally` so failed assertions also release it. In this binding,
-  end-of-test verification precedes `addTearDown`. For a real light conversation
+  Widget tests enable semantics by default. Use the binding's handle for
+  ordinary label assertions. Dispose a separately acquired `ensureSemantics()`
+  handle in `finally` before returning. End-of-test verification precedes
+  `addTearDown`; the BL-107 label fixture pair `b5d4511bd` and `19eb91905`
+  verifies the default handle path. For a real light conversation
   fixture, pass `BackgroundPreference.daylightLagoon` to `ConversationScreen`.
   Its `AmbientBackground` deliberately replaces the outer readable-color
   extension from its own background preference; an outer light Theme with the
