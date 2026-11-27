@@ -849,7 +849,7 @@ void main() {
     final placements = (manifest['placementExceptions'] as List<dynamic>)
         .cast<Map<String, dynamic>>();
 
-    expect(dependencies, hasLength(153));
+    expect(dependencies, hasLength(152));
     expect(placements, isEmpty);
     expect(_reviewedResumeExceptionTargets, hasLength(18));
     for (final target in _reviewedResumeExceptionTargets) {

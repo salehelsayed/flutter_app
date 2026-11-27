@@ -1142,7 +1142,7 @@ void main() {
       final manifestSource = File(_exceptionsPath).readAsStringSync();
       final manifest = jsonDecode(manifestSource) as Map<String, dynamic>;
       final dependencies = manifest['dependencyExceptions'] as List<dynamic>;
-      expect(dependencies, hasLength(153));
+      expect(dependencies, hasLength(152));
       expect(manifest['placementExceptions'] as List<dynamic>, isEmpty);
       final p2pExceptions = dependencies
           .cast<Map<String, dynamic>>()

@@ -6,9 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 const _contractPath = 'test/unit/dtr18_placement_closure_contract_test.dart';
 const _dependencyIdentitySha256 =
-    '39cc1b514bb71ca7c65102201e938346a8b67fa9f431893c1e631234183c85e4';
+    'fffae43f17c270ca05fc6fbad6725c8662c4d1dd082cb98f42c2d24983ba582b';
 const _dependencyDispositionSha256 =
-    '887272d7eca799c990e91d1ac3da9ba58393fba594c21a2505615af32b71f1f6';
+    '4934f7691e25d38aabf22ebdf705c0365202dabcf557d8186720c0dbb84af1b1';
 const _residualEvidence =
     'DTR18-AUTH-02 terminal residual disposition dated 2026-07-28.';
 
@@ -495,7 +495,7 @@ void main() {
 
     expect(_relocations, hasLength(22));
     expect(placements, isEmpty);
-    expect(dependencies, hasLength(153));
+    expect(dependencies, hasLength(152));
     expect(
       _dependencyIdentitySha256For(dependencies),
       _dependencyIdentitySha256,

@@ -1086,7 +1086,7 @@ void main() {
         manifest['dependencyExceptions'] as List<dynamic>;
     expect(
       dependencyExceptions,
-      hasLength(153),
+      hasLength(152),
       reason:
           'DTR-16 must not add or rebaseline a dependency exception; '
           'DTR-18 resume and debug-composition relocations removed their reviewed rows',
