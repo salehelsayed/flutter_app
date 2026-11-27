@@ -515,7 +515,6 @@ void main() {
           await tester.pump(const Duration(milliseconds: 350)).timeout(deadline);
 
           expect(tester.view.viewInsets.bottom, 0);
-          expect(find.byType(IntroBanner), findsOneWidget);
           final composer = find.bySemanticsIdentifier('chat_composer');
           final field = find.byType(TextField);
           final fieldBounds = tester.getRect(field);
@@ -538,17 +537,34 @@ void main() {
           }
 
           final l10n = AppLocalizations.of(tester.element(field))!;
+          final promo = find.widgetWithText(
+            TextButton,
+            l10n.intro_banner_title('Alice'),
+          );
+          expect(find.byType(IntroBanner), findsNothing);
+          expect(promo.hitTestable(), findsOneWidget);
+          expect(tester.getSize(promo).shortestSide, greaterThanOrEqualTo(44));
           final make = find.widgetWithText(
             ElevatedButton,
             l10n.intro_make_introductions,
           );
           final later = find.widgetWithText(TextButton, l10n.intro_maybe_later);
           for (final action in [make, later]) {
-            await tester.ensureVisible(action).timeout(deadline);
+            await tester.tap(promo).timeout(deadline);
+            await tester.pump().timeout(deadline);
+            await tester.pump(const Duration(milliseconds: 400)).timeout(deadline);
+            expect(find.byType(IntroBanner), findsOneWidget);
+            await Scrollable.ensureVisible(
+              tester.element(action),
+              alignment: 0.5,
+            ).timeout(deadline);
             await tester.pump().timeout(deadline);
             expect(tester.getSize(action).shortestSide, greaterThanOrEqualTo(44));
             expect(action.hitTestable(), findsOneWidget);
             await tester.tap(action).timeout(deadline);
+            await tester.pump().timeout(deadline);
+            await tester.pump(const Duration(milliseconds: 400)).timeout(deadline);
+            expect(find.byType(IntroBanner), findsNothing);
           }
           expect((introductions, dismissals), (1, 1));
           await tester.tap(field.hitTestable()).timeout(deadline);
