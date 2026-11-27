@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/editable_username_widget.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_profile_section.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -12,6 +13,9 @@ void main() {
     BackgroundReadableColors readableColors = BackgroundReadableColors.dark,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       theme: ThemeData(extensions: <ThemeExtension<dynamic>>[readableColors]),
       home: Scaffold(body: child),
     );
@@ -225,6 +229,35 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.camera_alt));
     expect(tapped, isTrue);
+  });
+
+  testWidgets('BL-107 Settings profile camera has a 44 pt named target', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    var opened = false;
+    await tester
+        .pumpWidget(
+          wrap(
+            SettingsProfileSection(
+              username: 'Alice',
+              onPickAvatar: () => opened = true,
+            ),
+          ),
+        )
+        .timeout(deadline);
+    final camera = find.ancestor(
+      of: find.byIcon(Icons.camera_alt),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is GestureDetector && widget.onTap != null,
+      ),
+    ).first;
+    expect(tester.getSize(camera), const Size(44, 44));
+    expect(find.bySemanticsLabel('Change profile photo'), findsOneWidget);
+    await tester
+        .tapAt(tester.getTopLeft(camera) + const Offset(1, 1))
+        .timeout(deadline);
+    expect(opened, isTrue);
   });
 
   testWidgets('renders EditableUsernameWidget', (tester) async {

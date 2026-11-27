@@ -7,6 +7,7 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/settings_orbit_nav_button.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/background_choice_control.dart';
 
@@ -147,6 +148,61 @@ void main() {
 
     expect(pageScrollPosition(tester).maxScrollExtent, 0.0);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('BL-107 Settings scroll clears the floating Orbit control', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    setViewport(tester, const Size(390, 660));
+    tester.view.viewPadding = const FakeViewPadding(bottom: 34);
+    addTearDown(tester.view.resetViewPadding);
+    await tester.pumpWidget(wrapScreen()).timeout(deadline);
+
+    final orbit = find.byType(SettingsOrbitNavButton);
+    final scroll = tester.widget<SingleChildScrollView>(
+      find.byType(SingleChildScrollView),
+    );
+    expect(
+      scroll.padding!.resolve(TextDirection.ltr).bottom,
+      tester.getSize(orbit).height + 16 + 34,
+    );
+
+    final position = pageScrollPosition(tester);
+    position.jumpTo(position.maxScrollExtent);
+    await tester.pump().timeout(deadline);
+    final nearby = find.byKey(const ValueKey('settings-row-nearby'));
+    expect(tester.getRect(nearby).bottom, lessThan(tester.getRect(orbit).top));
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final (locale, peer, recovery) in [
+    ('en', 'Peer ID', 'Recovery phrase'),
+    ('de', 'Peer-ID', 'Wiederherstellungsphrase'),
+    ('ar', 'معرّف النظير', 'عبارة الاسترداد'),
+  ]) {
+    testWidgets('BL-107 Settings identity titles use approved $locale copy', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      setPhoneViewport(tester);
+      await tester
+          .pumpWidget(wrapScreen(locale: Locale(locale)))
+          .timeout(deadline);
+      expect(find.text(peer), findsOneWidget);
+      expect(find.text(recovery), findsOneWidget);
+    });
+  }
+
+  testWidgets('BL-107 Settings section titles use 13 pt uppercase', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    setPhoneViewport(tester);
+    await tester.pumpWidget(wrapScreen()).timeout(deadline);
+    for (final label in ['IDENTITY', 'PREFERENCES']) {
+      expect(tester.widget<Text>(find.text(label)).style?.fontSize, 13);
+    }
   });
 
   testWidgets('T2 grouped rows with keys render in order', (tester) async {

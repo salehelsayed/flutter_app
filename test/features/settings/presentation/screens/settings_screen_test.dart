@@ -17,6 +17,7 @@ void main() {
     String? mnemonic,
     bool isPeerIdCopied = false,
     VoidCallback? onBack,
+    VoidCallback? onCopyPeerId,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
     BackgroundReadableTone? readableToneOverride,
@@ -45,6 +46,7 @@ void main() {
           mnemonic: mnemonic,
           isPeerIdCopied: isPeerIdCopied,
           onBack: onBack,
+          onCopyPeerId: onCopyPeerId,
           currentBackgroundPreference: backgroundPreference,
           onMyQr: onMyQr,
           onScan: onScan,
@@ -108,6 +110,55 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.chevron_left));
     expect(backed, isTrue);
+  });
+
+  testWidgets('BL-107 Settings Back is named and has a 44 pt hit target', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    var backed = false;
+    await tester
+        .pumpWidget(wrap(onBack: () => backed = true))
+        .timeout(deadline);
+    final back = find.ancestor(
+      of: find.byIcon(Icons.chevron_left),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is GestureDetector && widget.onTap != null,
+      ),
+    ).first;
+    expect(tester.getSize(back), const Size(44, 44));
+    expect(find.bySemanticsLabel('Back'), findsOneWidget);
+    await tester
+        .tapAt(tester.getTopLeft(back) + const Offset(1, 1))
+        .timeout(deadline);
+    expect(backed, isTrue);
+  });
+
+  testWidgets('BL-107 Settings copy Peer ID has a 44 pt named target', (
+    tester,
+  ) async {
+    const deadline = Duration(seconds: 3);
+    var copies = 0;
+    await tester
+        .pumpWidget(
+          wrap(
+            peerId: '12D3KooWTestPeer123',
+            onCopyPeerId: () => copies++,
+          ),
+        )
+        .timeout(deadline);
+    final copy = find.ancestor(
+      of: find.byIcon(Icons.copy),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is GestureDetector && widget.onTap != null,
+      ),
+    ).first;
+    expect(tester.getSize(copy), const Size(44, 44));
+    expect(find.bySemanticsLabel('Copy Peer ID'), findsOneWidget);
+    await tester
+        .tapAt(tester.getTopLeft(copy) + const Offset(1, 1))
+        .timeout(deadline);
+    expect(copies, 1);
   });
 
   testWidgets('renders profile section and identity rows', (tester) async {
