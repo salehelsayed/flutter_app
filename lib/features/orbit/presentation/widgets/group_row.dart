@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
@@ -290,7 +291,7 @@ class GroupRow extends StatelessWidget {
           },
         ),
       ),
-    );
+    ).withPressFeedback();
 
     final identifiedCard = Semantics(
       identifier: 'orbit.group.${group.groupId}',

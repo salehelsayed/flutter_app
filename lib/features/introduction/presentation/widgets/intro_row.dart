@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -181,7 +182,7 @@ class IntroRow extends StatelessWidget {
                         ),
                       ),
                     ),
-                  ),
+                  ).withPressFeedback(),
                 ],
               ],
             )

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/editable_username_widget.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -65,7 +66,7 @@ class SettingsProfileSection extends StatelessWidget {
                         color: Colors.white,
                       ),
                     ),
-                  ),
+                  ).withPressFeedback(),
                 ),
               ],
             ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Banner shown in place of ComposeArea when a contact is blocked.
@@ -56,7 +57,7 @@ class BlockedBanner extends StatelessWidget {
                     color: Color(0xFF10B981),
                   ),
                 ),
-              ),
+              ).withPressFeedback(),
             ],
           ),
         ),

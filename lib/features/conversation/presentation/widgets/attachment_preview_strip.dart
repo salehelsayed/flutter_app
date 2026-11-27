@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/media/media_mime.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
@@ -312,7 +313,7 @@ class _Thumbnail extends StatelessWidget {
                   ),
                   child: const Icon(Icons.close, size: 14, color: Colors.white),
                 ),
-              ),
+              ).withPressFeedback(),
             ),
         ],
       ),

@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
@@ -491,7 +492,7 @@ class OrbitalVisualization extends StatelessWidget {
                         v2Options,
                       ),
                     ),
-                  ),
+                  ).withPressFeedback(),
                 ),
         ),
     ];

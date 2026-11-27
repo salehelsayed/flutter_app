@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// 209 — a labeled glass group card for the One-Screen Settings page.
@@ -203,7 +204,7 @@ class SettingsListRow extends StatelessWidget {
           ),
         ),
       ),
-    );
+    ).withPressFeedback();
 
     if (onTap == null) return row;
     return Semantics(button: true, child: row);

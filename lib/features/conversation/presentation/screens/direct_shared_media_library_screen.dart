@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -626,7 +627,7 @@ class _DirectSharedMediaLibraryScreenState
               ),
           ],
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 

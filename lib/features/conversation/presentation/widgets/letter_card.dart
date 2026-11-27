@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -1246,7 +1247,7 @@ class LetterCard extends StatelessWidget {
             style: const TextStyle(fontSize: 14),
           ),
         ),
-      );
+      ).withPressFeedback();
     }).toList();
   }
 

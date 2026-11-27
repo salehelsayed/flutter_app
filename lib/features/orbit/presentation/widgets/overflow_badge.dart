@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -133,7 +134,7 @@ class _OverflowBadgeState extends State<OverflowBadge>
             height: 44,
             child: Center(child: visual),
           ),
-        ),
+        ).withPressFeedback(),
       );
     }
 

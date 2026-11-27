@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
@@ -269,7 +270,7 @@ class SettingsScreen extends StatelessWidget {
                                 color: readableColors.iconPrimary,
                               ),
                             ),
-                          ),
+                          ).withPressFeedback(),
                           // Title
                           Expanded(
                             child: Text(
@@ -421,6 +422,6 @@ class _PeerIdCopyButton extends StatelessWidget {
           ),
         ),
       ),
-    );
+    ).withPressFeedback();
   }
 }

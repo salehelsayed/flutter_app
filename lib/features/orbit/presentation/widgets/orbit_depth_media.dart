@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -301,7 +302,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
                   ),
                 ),
               ),
-            ),
+            ).withPressFeedback(),
           ),
         ),
       ],

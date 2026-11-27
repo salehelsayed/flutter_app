@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_tokens.dart';
@@ -434,7 +435,7 @@ class _FeedScreenState extends State<FeedScreen> {
               ],
             ),
           ),
-        ),
+        ).withPressFeedback(),
       ),
     );
   }
@@ -589,7 +590,7 @@ class _FeedScreenState extends State<FeedScreen> {
         widget.onFocusCard?.call(threadId);
       },
       child: body,
-    );
+    ).withPressFeedback();
   }
 
   /// Handles a swipe-LEFT dismiss: marks the thread cleared (read-state
@@ -703,7 +704,7 @@ class _FeedScreenState extends State<FeedScreen> {
                 l10n.feed_tap_to_retry,
                 style: tokens.textMeta.copyWith(color: tokens.green500),
               ),
-            ),
+            ).withPressFeedback(),
           ),
         );
       }

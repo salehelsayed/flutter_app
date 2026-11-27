@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -320,7 +321,7 @@ class CallControlButton extends StatelessWidget {
             ),
           ],
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 }

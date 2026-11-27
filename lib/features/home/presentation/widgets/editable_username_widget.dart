@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
@@ -170,6 +171,6 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
           Icon(Icons.edit, color: mutedTextColor, size: 14),
         ],
       ),
-    );
+    ).withPressFeedback();
   }
 }

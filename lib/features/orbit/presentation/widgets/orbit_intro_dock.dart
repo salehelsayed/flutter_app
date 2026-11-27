@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -52,7 +53,7 @@ class OrbitIntroDock extends StatelessWidget {
               ),
             ),
           ),
-        ),
+        ).withPressFeedback(),
       );
     }
 
@@ -121,7 +122,7 @@ class OrbitIntroDock extends StatelessWidget {
               ),
             ),
           ),
-        ),
+        ).withPressFeedback(),
       ),
     );
   }

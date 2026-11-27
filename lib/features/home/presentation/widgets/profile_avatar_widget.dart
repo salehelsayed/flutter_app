@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/shared/widgets/media/avatar_image_provider.dart';
 import 'user_avatar.dart';
@@ -156,7 +157,7 @@ class ProfileAvatarWidget extends StatelessWidget {
             size: iconSize,
           ),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 }

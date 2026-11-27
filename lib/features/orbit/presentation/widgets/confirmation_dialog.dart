@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Shows a confirmation dialog with a title, description, and danger action.
@@ -133,7 +134,7 @@ class _ConfirmationDialog extends StatelessWidget {
                                 ),
                               ),
                             ),
-                          ),
+                          ).withPressFeedback(),
                         ),
                         const SizedBox(width: 10),
                         // Danger confirm button
@@ -164,7 +165,7 @@ class _ConfirmationDialog extends StatelessWidget {
                                 ),
                               ),
                             ),
-                          ),
+                          ).withPressFeedback(),
                         ),
                       ],
                     ),

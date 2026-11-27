@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// Emoji categories for the full picker.
@@ -129,7 +130,7 @@ class _FullEmojiPickerState extends State<_FullEmojiPicker> {
                     ),
                   ),
                 ),
-              );
+              ).withPressFeedback();
             }).toList(),
           ),
         ),
@@ -153,7 +154,7 @@ class _FullEmojiPickerState extends State<_FullEmojiPicker> {
                     style: const TextStyle(fontSize: 24),
                   ),
                 ),
-              );
+              ).withPressFeedback();
             },
           ),
         ),

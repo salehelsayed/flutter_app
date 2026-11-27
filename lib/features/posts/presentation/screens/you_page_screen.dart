@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
 import 'package:flutter_app/core/utils/thought_lifetime.dart';
@@ -811,7 +812,7 @@ class _ThoughtCard extends StatelessWidget {
                             kind: visual[i].kind,
                             durationMs: visual[i].durationMs,
                           ),
-                        ),
+                        ).withPressFeedback(),
                     ],
                   ),
                 ] else if (localPhotos.isNotEmpty) ...[
@@ -1098,7 +1099,7 @@ class _WroteFace extends StatelessWidget {
               ],
             ),
           ),
-        ),
+        ).withPressFeedback(),
       ),
     );
   }
@@ -1343,7 +1344,7 @@ class _ComposerBar extends StatelessWidget {
                   ),
                 ],
               ),
-            ),
+            ).withPressFeedback(),
           ),
         ),
       ),
@@ -1406,7 +1407,7 @@ class _TaggedText extends StatelessWidget {
                     key: ValueKey('you-tag-${tag.key}'),
                     style: tagStyle,
                   ),
-          ),
+          ).withPressFeedback(),
         ),
       ),
     );
@@ -1492,7 +1493,7 @@ class _TagBar extends StatelessWidget {
                           ],
                         ),
                       ),
-                    ),
+                    ).withPressFeedback(),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1567,7 +1568,7 @@ class _SeenChip extends StatelessWidget {
             ],
           ),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 }
@@ -1780,7 +1781,7 @@ class _SeenList extends StatelessWidget {
                     ],
                   ),
                 ),
-              ),
+              ).withPressFeedback(),
             ),
         ],
       ),
@@ -2006,7 +2007,7 @@ class _FilterPill extends StatelessWidget {
             ],
           ),
         ),
-      ),
+      ).withPressFeedback(),
     );
   }
 }
