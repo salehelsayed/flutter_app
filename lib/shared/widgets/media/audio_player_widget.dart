@@ -11,7 +11,6 @@ import 'package:just_audio/just_audio.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
-import 'package:flutter_app/shared/widgets/action_semantics.dart';
 
 import 'media_display_helpers.dart';
 import 'voice_playback_speed.dart';
@@ -718,7 +717,8 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
       child: Row(
         children: [
           // Play/pause button
-          ActionSemantics(
+          Semantics(
+            button: true,
             label: _isPlaying
                 ? l10n.a11y_pause_voice_message
                 : l10n.a11y_play_voice_message,
