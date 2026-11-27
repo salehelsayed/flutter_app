@@ -853,7 +853,36 @@ void main() {
   });
 
   testWidgets(
-    'own posting retry stays in place and follows repository progress',
+    'BL-107 Thought sent meta is localized on a completed outgoing Thought',
+    (tester) async {
+      final mine = _thought(initialNow).copyWith(
+        senderPeerId: 'local-peer',
+        authorPeerId: 'local-peer',
+        authorUsername: 'Me',
+        isIncoming: false,
+        deliveryStatus: 'sent',
+      );
+      await posts.savePost(mine).timeout(const Duration(seconds: 3));
+      await openCard(
+        tester,
+        mine,
+        locale: const Locale('de'),
+        loadCurrent: () => posts.getPost(mine.id),
+      );
+      final meta = find.byKey(const ValueKey('thought-age'));
+      final l10n = AppLocalizations.of(tester.element(meta))!;
+      expect(
+        tester.widget<Text>(meta).data,
+        '${l10n.time_hour_ago(2)} · ${l10n.message_status_sent} · '
+        '${l10n.thought_gone_in_hours(22)}',
+      );
+      expect(find.byKey(const ValueKey('thought-posting-status')), findsNothing);
+      await finish(tester);
+    },
+  );
+
+  testWidgets(
+    'BL-107 Thought sent meta follows repository progress after retry',
     (tester) async {
       final mine = _thought(initialNow).copyWith(
         senderPeerId: 'local-peer',
@@ -875,6 +904,7 @@ void main() {
         },
       );
       expect(find.text('Send failed'), findsOneWidget);
+      expect(find.text('2h ago · gone in 22 h'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('thought-posting-retry')));
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('thought-posting-retry')));
@@ -882,8 +912,13 @@ void main() {
       expect(find.byType(ThoughtCardScreen), findsOneWidget);
       await posts.savePost(mine.copyWith(deliveryStatus: 'sent'));
       retry.complete(1);
-      await tester.pumpAndSettle();
-      expect(find.text('sent'), findsOneWidget);
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 100),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 3),
+      );
+      expect(find.text('2h ago · sent · gone in 22 h'), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-posting-status')), findsNothing);
       expect(find.byKey(const ValueKey('thought-posting-retry')), findsNothing);
       await finish(tester);
     },
