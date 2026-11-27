@@ -4,8 +4,8 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_dock.dart';
 
 void main() {
-  Widget wrap(Widget child) => MaterialApp(
-    locale: const Locale('en'),
+  Widget wrap(Widget child, {Locale locale = const Locale('en')}) => MaterialApp(
+    locale: locale,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: child),
@@ -83,6 +83,9 @@ void main() {
       ) async {
         const deadline = Duration(seconds: 3);
         final actions = <String>[];
+        final semantics = tester.ensureSemantics();
+        addTearDown(semantics.dispose);
+        final isRtl = direction == TextDirection.rtl;
         await tester
             .pumpWidget(
               wrap(
@@ -97,9 +100,18 @@ void main() {
                     query: 'hello',
                   ),
                 ),
+                locale: Locale(isRtl ? 'ar' : 'en'),
               ),
             )
             .timeout(deadline);
+        expect(
+          find.bySemanticsLabel(isRtl ? 'مسح البحث' : 'Clear search'),
+          findsOneWidget,
+        );
+        expect(
+          find.bySemanticsLabel(isRtl ? 'إغلاق البحث' : 'Close search'),
+          findsOneWidget,
+        );
         final icons = find.byIcon(Icons.close);
         expect(icons, findsNWidgets(2));
         for (var index = 0; index < 2; index++) {

@@ -134,6 +134,8 @@ void main() {
     ) async {
       const deadline = Duration(seconds: 3);
       final removed = <int>[];
+      final semantics = tester.ensureSemantics();
+      addTearDown(semantics.dispose);
       await tester
           .pumpWidget(
             buildTestWidget(
@@ -153,6 +155,7 @@ void main() {
       expect(size.width, greaterThanOrEqualTo(44));
       expect(size.height, greaterThanOrEqualTo(44));
       expect(tester.widget<Icon>(icon).size, 14);
+      expect(find.bySemanticsLabel('Remove attachment'), findsOneWidget);
 
       final point = tester.getRect(target).bottomLeft + const Offset(4, -4);
       await tester.tapAt(point).timeout(deadline);

@@ -72,6 +72,8 @@ void main() {
   ) async {
     const deadline = Duration(seconds: 3);
     final actions = <String>[];
+    final semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
     await tester
         .pumpWidget(
           MaterialApp(
@@ -90,11 +92,12 @@ void main() {
           ),
         )
         .timeout(deadline);
-    for (final glyph in [
-      Icons.favorite_border,
-      Icons.mode_comment_outlined,
-      Icons.repeat,
+    for (final (glyph, label) in [
+      (Icons.favorite_border, 'Like'),
+      (Icons.mode_comment_outlined, 'Open comments'),
+      (Icons.repeat, 'Pass along'),
     ]) {
+      expect(find.bySemanticsLabel(RegExp(RegExp.escape(label))), findsWidgets);
       final icon = find.byIcon(glyph);
       final target = find.ancestor(of: icon, matching: find.byType(InkWell)).first;
       final size = tester.getSize(target);

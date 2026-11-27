@@ -87,6 +87,25 @@ void main() {
   Finder pillF() => find.byKey(const ValueKey('orbit-find-pill'));
 
   group('205 find-pill UX', () {
+    testWidgets('BL-107 inline Orbit search close uses a 44 pt hit target', (
+      tester,
+    ) async {
+      const deadline = Duration(seconds: 3);
+      await tester.pumpWidget(host(_friends(8))).timeout(deadline);
+      await settle(tester).timeout(deadline);
+      await tester.tap(pillF()).timeout(deadline);
+      await tester.pump().timeout(deadline);
+
+      final close = find.byKey(const ValueKey('orbit-find-close'));
+      expect(tester.getSize(close), const Size(44, 44));
+      await tester
+          .tapAt(tester.getCenter(close) + const Offset(0, 17))
+          .timeout(deadline);
+      await tester.pump().timeout(deadline);
+      expect(find.byType(TextField), findsNothing);
+      await settle(tester).timeout(deadline);
+    });
+
     testWidgets(
         'TC-205-01 find pill exposes a close X that collapses and dismisses '
         'the keyboard', (tester) async {
