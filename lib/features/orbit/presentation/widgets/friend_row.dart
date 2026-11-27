@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/features/contact_request/presentation/pending_contact_retry_scope.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -18,6 +19,7 @@ class FriendRow extends StatelessWidget {
   final bool showInnerCircleBadge;
   final bool hideUnreadBadge;
   final VoidCallback onTap;
+  final Map<CustomSemanticsAction, VoidCallback>? customSemanticsActions;
 
   /// Invoked when the avatar specifically is tapped (opens the contact
   /// profile). Falls back to the row's [onTap] when null.
@@ -27,6 +29,7 @@ class FriendRow extends StatelessWidget {
     super.key,
     required this.friend,
     required this.onTap,
+    this.customSemanticsActions,
     this.onAvatarTap,
     this.showInnerCircleBadge = false,
     this.hideUnreadBadge = false,
@@ -61,6 +64,7 @@ class FriendRow extends StatelessWidget {
 
     return Semantics(
       identifier: 'orbit.contact.${friend.peerId}',
+      customSemanticsActions: customSemanticsActions,
       child: GestureDetector(
         onTap: onTap,
         child: Container(

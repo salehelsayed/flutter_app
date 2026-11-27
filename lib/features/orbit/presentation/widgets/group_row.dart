@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -21,6 +22,7 @@ class GroupRow extends StatelessWidget {
 
   final OrbitGroup group;
   final VoidCallback onTap;
+  final Map<CustomSemanticsAction, VoidCallback>? customSemanticsActions;
 
   /// Invoked when the user taps "Retry now" on a group whose rejoin has given
   /// up (attempt ≥ [_joinGiveUpThreshold]) — force-eligible + fresh rejoin (G2).
@@ -34,6 +36,7 @@ class GroupRow extends StatelessWidget {
     super.key,
     required this.group,
     required this.onTap,
+    this.customSemanticsActions,
     this.onRetryStuckRejoin,
     this.onLeaveStuckGroup,
   });
@@ -291,6 +294,7 @@ class GroupRow extends StatelessWidget {
 
     final identifiedCard = Semantics(
       identifier: 'orbit.group.${group.groupId}',
+      customSemanticsActions: customSemanticsActions,
       child: card,
     );
 

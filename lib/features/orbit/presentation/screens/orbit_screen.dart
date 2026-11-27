@@ -1997,8 +1997,9 @@ class _OrbitScreenView extends StatelessWidget {
           onBlock: () => onBlockFriend(friend),
           onUnblock: () => onUnblockFriend(friend),
           onDelete: () => onDeleteFriend(friend),
-          child: FriendRow(
+          rowBuilder: (actions) => FriendRow(
             friend: friend,
+            customSemanticsActions: actions,
             showInnerCircleBadge: projection.searchActive && isInnerCircle,
             hideUnreadBadge: isArchived,
             onTap: () => onFriendTap(friend),
@@ -2027,8 +2028,9 @@ class _OrbitScreenView extends StatelessWidget {
           onUnarchive: () => onUnarchiveGroup(group),
           onLeave: group.group.isDissolved ? null : () => onLeaveGroup(group),
           onDelete: group.group.isDissolved ? () => onDeleteGroup(group) : null,
-          child: GroupRow(
+          rowBuilder: (actions) => GroupRow(
             group: group,
+            customSemanticsActions: actions,
             onTap: () => onGroupTap(group),
             onRetryStuckRejoin: onRetryStuckRejoinGroup == null
                 ? null

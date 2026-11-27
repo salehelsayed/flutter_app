@@ -1,15 +1,22 @@
+import 'dart:async';
+
+import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
+import 'package:flutter_app/l10n/app_localizations.dart';
+
 import 'swipe_action_buttons.dart';
 
-/// Swipeable wrapper for friend rows with slide-to-reveal action buttons.
-///
-/// Left-swipe reveals action buttons behind the card content:
-/// - Active tab: buttons for the callbacks that are actually provided
-/// - Archived tab: "Unarchive" pill button (180px action area)
+typedef _RowAction = ({String label, VoidCallback onSelect, Widget button});
+
+/// Reveals Orbit row actions by swiping toward the start edge or holding the row.
 ///
 /// Uses a [ValueNotifier] to ensure only one row is open at a time.
 class SwipeableFriendRow extends StatefulWidget {
-  final Widget child;
+  final Widget? child;
+
+  /// Places swipe actions on a row that owns its own semantics node.
+  final Widget Function(Map<CustomSemanticsAction, VoidCallback>)? rowBuilder;
   final bool isArchived;
   final bool isBlocked;
   final VoidCallback? onArchive;
@@ -22,7 +29,8 @@ class SwipeableFriendRow extends StatefulWidget {
 
   const SwipeableFriendRow({
     super.key,
-    required this.child,
+    this.child,
+    this.rowBuilder,
     required this.isArchived,
     required this.openRowNotifier,
     this.isBlocked = false,
@@ -32,7 +40,8 @@ class SwipeableFriendRow extends StatefulWidget {
     this.onUnblock,
     this.onLeave,
     this.onDelete,
-  }) : assert(isArchived || onLeave == null || onDelete == null);
+  }) : assert((child == null) != (rowBuilder == null)),
+       assert(isArchived || onLeave == null || onDelete == null);
 
   @override
   State<SwipeableFriendRow> createState() => _SwipeableFriendRowState();
@@ -41,35 +50,11 @@ class SwipeableFriendRow extends StatefulWidget {
 class _SwipeableFriendRowState extends State<SwipeableFriendRow>
     with SingleTickerProviderStateMixin {
   late final AnimationController _slideController;
-  double _dragStartX = 0;
-  bool _isDragging = false;
-  bool _isHorizontalDrag = false;
-  bool _directionLocked = false;
+  bool _dragCancelled = false;
   bool _isCollapsing = false;
 
-  // Active with block: 3 buttons (48×3) + gaps (8×2) + padding (8×2) = 176 → 180
-  // Active without block: 2 buttons (48×2) + gap (8×1) + padding (8×2) = 128 → 130
-  // Delete-only: 1 button (48) + padding = ~80
-  // Archived: Unarchive pill (~170) + padding
-  bool get _hasBlockAction =>
-      widget.onBlock != null || widget.onUnblock != null;
-  bool get _hasDeleteAction => widget.onDelete != null;
-  bool get _hasLeaveAction => widget.onLeave != null;
-  bool get _hasArchiveAction => widget.onArchive != null;
-  int get _actionCount =>
-      (_hasBlockAction ? 1 : 0) +
-      (_hasLeaveAction ? 1 : 0) +
-      (_hasDeleteAction ? 1 : 0) +
-      (_hasArchiveAction ? 1 : 0);
-  double get _actionWidth => widget.isArchived
-      ? 180.0
-      : switch (_actionCount) {
-          0 => 0.0,
-          1 => 82.0,
-          2 => 130.0,
-          _ => 180.0,
-        };
-
+  static const _actionSpacing = 6.0;
+  static const _buttonWidth = 72.0;
   static const _snapThreshold = 0.5; // 50% of action width
   static const _snapCurve = Cubic(0.25, 0.46, 0.45, 0.94);
   static const _snapDuration = Duration(milliseconds: 300);
@@ -118,56 +103,21 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
     }
   }
 
-  void _onDragStart(DragStartDetails details) {
-    _dragStartX = details.localPosition.dx;
-    _isDragging = true;
-    _isHorizontalDrag = false;
-    _directionLocked = false;
+  void _onDragUpdate(
+    DragUpdateDetails details,
+    double actionWidth,
+    double revealSign,
+  ) {
+    if (_dragCancelled || _isCollapsing) return;
+    _slideController.value += details.delta.dx * revealSign / actionWidth;
   }
 
-  void _onDragUpdate(DragUpdateDetails details) {
-    if (!_isDragging || _isCollapsing) return;
+  void _onDragEnd(DragEndDetails details, double revealSign) {
+    if (_dragCancelled || _isCollapsing) return;
 
-    // Lock direction after 8px of movement
-    if (!_directionLocked) {
-      final dx = (details.localPosition.dx - _dragStartX).abs();
-      final dy = details.delta.dy.abs();
-      if (dx > 8 || dy > 8) {
-        _directionLocked = true;
-        _isHorizontalDrag = dx > dy;
-      }
-      return;
-    }
+    final revealVelocity = (details.primaryVelocity ?? 0) * revealSign;
 
-    if (!_isHorizontalDrag) return;
-
-    final delta = details.delta.dx;
-    final currentPixels = _slideController.value * _actionWidth;
-    var newPixels = currentPixels - delta; // Negate: left swipe = positive
-
-    // Rubber band beyond action width
-    if (newPixels > _actionWidth) {
-      final excess = newPixels - _actionWidth;
-      newPixels = _actionWidth + excess * 0.3;
-    }
-
-    // Clamp to [0, actionWidth + rubberBand]
-    newPixels = newPixels.clamp(0.0, _actionWidth * 1.5);
-    _slideController.value = newPixels / _actionWidth;
-
-    // Notify that this row is being interacted with
-    if (_slideController.value > 0) {
-      widget.openRowNotifier.value = widget.key;
-    }
-  }
-
-  void _onDragEnd(DragEndDetails details) {
-    _isDragging = false;
-    if (!_isHorizontalDrag || _isCollapsing) return;
-
-    final velocity = details.primaryVelocity ?? 0;
-
-    if (velocity < -300 || _slideController.value >= _snapThreshold) {
+    if (revealVelocity > 300 || _slideController.value >= _snapThreshold) {
       // Snap open
       _slideController.animateTo(1.0, curve: _snapCurve);
       widget.openRowNotifier.value = widget.key;
@@ -175,6 +125,11 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
       // Snap closed
       _slideController.animateTo(0, curve: _snapCurve);
     }
+  }
+
+  void _cancelDrag() {
+    _dragCancelled = true;
+    if (!_isCollapsing) _slideController.animateTo(0, curve: _snapCurve);
   }
 
   void _handleArchive() {
@@ -214,93 +169,148 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
     widget.onLeave?.call();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (!widget.isArchived && _actionCount == 0) {
-      return widget.child;
+  List<_RowAction> _actions(AppLocalizations l10n) {
+    if (widget.isArchived) {
+      return [
+        if (widget.onUnarchive != null)
+          (
+            label: l10n.orbit_unarchive_action,
+            onSelect: _handleUnarchive,
+            button: UnarchiveActionButton(onTap: _handleUnarchive),
+          ),
+      ];
     }
-
-    return AnimatedBuilder(
-      animation: _slideController,
-      builder: (context, child) {
-        final t = _slideController.value.clamp(0.0, 1.5);
-        final offset = t * _actionWidth;
-
-        return Stack(
-          clipBehavior: Clip.none,
-          children: [
-            // Action buttons behind — right-aligned
-            if (t > 0)
-              Positioned(
-                right: 0,
-                top: 0,
-                bottom: 0,
-                child: _buildActionButtons(t),
-              ),
-
-            // Card content — slides left
-            Transform.translate(
-              offset: Offset(-offset, 0),
-              child: GestureDetector(
-                onHorizontalDragStart: _onDragStart,
-                onHorizontalDragUpdate: _onDragUpdate,
-                onHorizontalDragEnd: _onDragEnd,
-                child: widget.child,
-              ),
-            ),
-          ],
-        );
-      },
-    );
+    return [
+      if (widget.isBlocked && widget.onUnblock != null)
+        (
+          label: l10n.orbit_unblock_action,
+          onSelect: _handleUnblock,
+          button: UnblockActionButton(onTap: _handleUnblock),
+        )
+      else if (!widget.isBlocked && widget.onBlock != null)
+        (
+          label: l10n.orbit_block_action,
+          onSelect: _handleBlock,
+          button: BlockActionButton(onTap: _handleBlock),
+        ),
+      if (widget.onLeave != null)
+        (
+          label: l10n.orbit_leave_action,
+          onSelect: _handleLeave,
+          button: LeaveActionButton(onTap: _handleLeave),
+        ),
+      if (widget.onDelete != null)
+        (
+          label: l10n.orbit_delete_action,
+          onSelect: _handleDelete,
+          button: DeleteActionButton(onTap: _handleDelete),
+        ),
+      if (widget.onArchive != null)
+        (
+          label: l10n.orbit_archive_action,
+          onSelect: _handleArchive,
+          button: ArchiveActionButton(onTap: _handleArchive),
+        ),
+    ];
   }
 
-  Widget _buildActionButtons(double t) {
-    // Parallax: buttons slide in from right at 60% of the card's speed
-    final buttonOffset = (1 - t) * _actionWidth * 0.6;
-    final buttons = <Widget>[];
+  Future<void> _showActions(
+    List<_RowAction> actions,
+    Offset globalPosition,
+  ) async {
+    final overlay = Navigator.of(context).overlay!;
+    final bounds = overlay.context.findRenderObject()! as RenderBox;
+    final anchor = bounds.globalToLocal(globalPosition);
+    final selected = await showMenu<VoidCallback>(
+      context: overlay.context,
+      position: RelativeRect.fromSize(
+        Rect.fromPoints(anchor, anchor),
+        bounds.size,
+      ),
+      items: [
+        for (final action in actions)
+          PopupMenuItem(value: action.onSelect, child: Text(action.label)),
+      ],
+    );
+    if (mounted) selected?.call();
+  }
 
-    void addButton(Widget button) {
-      if (buttons.isNotEmpty) {
-        buttons.add(const SizedBox(width: 8));
-      }
-      buttons.add(button);
-    }
+  @override
+  Widget build(BuildContext context) {
+    final actions = _actions(AppLocalizations.of(context)!);
+    final customActions = {
+      for (final action in actions)
+        CustomSemanticsAction(label: action.label): action.onSelect,
+    };
+    final row = widget.rowBuilder?.call(customActions) ?? widget.child!;
+    if (actions.isEmpty) return row;
 
-    if (_hasBlockAction) {
-      addButton(
-        widget.isBlocked
-            ? UnblockActionButton(onTap: _handleUnblock)
-            : BlockActionButton(onTap: _handleBlock),
-      );
-    }
-    if (_hasLeaveAction) {
-      addButton(LeaveActionButton(onTap: _handleLeave));
-    }
-    if (_hasDeleteAction) {
-      addButton(DeleteActionButton(onTap: _handleDelete));
-    }
-    if (_hasArchiveAction) {
-      addButton(ArchiveActionButton(onTap: _handleArchive));
-    }
+    final actionWidth = widget.isArchived
+        ? 180.0
+        : _buttonWidth * actions.length + _actionSpacing * (actions.length - 1);
+    final revealSign = Directionality.of(context) == TextDirection.rtl
+        ? 1.0
+        : -1.0;
 
-    return Transform.translate(
-      offset: Offset(buttonOffset, 0),
-      child: Opacity(
-        opacity: t.clamp(0.0, 1.0),
-        child: widget.isArchived
-            ? SizedBox(
-                width: _actionWidth,
-                child: Center(
-                  child: UnarchiveActionButton(onTap: _handleUnarchive),
+    final rowOwnsSemantics = widget.rowBuilder != null;
+    return Semantics(
+      container: !rowOwnsSemantics,
+      customSemanticsActions: rowOwnsSemantics ? null : customActions,
+      child: AnimatedBuilder(
+        animation: _slideController,
+        builder: (context, child) {
+          final t = _slideController.value;
+          final offset = t * actionWidth * revealSign;
+
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              if (t > 0)
+                PositionedDirectional(
+                  end: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: Transform.translate(
+                    offset: Offset(
+                      (1 - t) * actionWidth * -revealSign * 0.6,
+                      0,
+                    ),
+                    child: Opacity(
+                      opacity: t,
+                      child: SizedBox(
+                        width: actionWidth,
+                        child: widget.isArchived
+                            ? Center(child: actions.single.button)
+                            : Row(
+                                spacing: _actionSpacing,
+                                children: [
+                                  for (final action in actions)
+                                    Expanded(child: action.button),
+                                ],
+                              ),
+                      ),
+                    ),
+                  ),
                 ),
-              )
-            : SizedBox(
-                width: _actionWidth,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: buttons,
-                ),
-              ),
+              Transform.translate(offset: Offset(offset, 0), child: child),
+            ],
+          );
+        },
+        child: Listener(
+          // Flutter also ends accepted drags on pointer cancellation.
+          onPointerCancel: (_) => _cancelDrag(),
+          child: GestureDetector(
+            excludeFromSemantics: rowOwnsSemantics,
+            dragStartBehavior: DragStartBehavior.down,
+            onHorizontalDragStart: (_) => _dragCancelled = false,
+            onHorizontalDragUpdate: (details) =>
+                _onDragUpdate(details, actionWidth, revealSign),
+            onHorizontalDragEnd: (details) => _onDragEnd(details, revealSign),
+            onLongPressStart: (details) =>
+                unawaited(_showActions(actions, details.globalPosition)),
+            child: row,
+          ),
+        ),
       ),
     );
   }

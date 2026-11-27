@@ -1,275 +1,143 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/shared/widgets/press_feedback.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/press_feedback.dart';
 
-/// "Block" action button — 48px circle with block icon + label.
+const _actionLabelStyle = TextStyle(
+  color: Colors.white,
+  fontSize: 13,
+  fontWeight: FontWeight.w600,
+);
+
 class BlockActionButton extends StatelessWidget {
-  final VoidCallback onTap;
-
   const BlockActionButton({super.key, required this.onTap});
 
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF6B7280), Color(0xFF4B5563)],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF4B5563).withValues(alpha: 0.4),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.block, color: Colors.white, size: 20),
-          ),
-          const SizedBox(height: 2),
-          SizedBox(
-            width: 48,
-            child: Text(
-              AppLocalizations.of(context)!.orbit_block_action,
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    ).withPressFeedback();
-  }
-}
-
-/// "Unblock" action button — 48px circle with green gradient + label.
-class UnblockActionButton extends StatelessWidget {
   final VoidCallback onTap;
 
+  @override
+  Widget build(BuildContext context) => _SwipeActionButton(
+    label: AppLocalizations.of(context)!.orbit_block_action,
+    icon: Icons.block,
+    color: const Color(0xFF4B5563),
+    onTap: onTap,
+  );
+}
+
+class UnblockActionButton extends StatelessWidget {
   const UnblockActionButton({super.key, required this.onTap});
 
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF10B981), Color(0xFF06B6D4)],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF10B981).withValues(alpha: 0.4),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.replay, color: Colors.white, size: 20),
-          ),
-          const SizedBox(height: 2),
-          SizedBox(
-            width: 48,
-            child: Text(
-              AppLocalizations.of(context)!.orbit_unblock_action,
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    ).withPressFeedback();
-  }
-}
-
-/// "Delete" action button — 48px circle with red gradient + label.
-class DeleteActionButton extends StatelessWidget {
   final VoidCallback onTap;
 
-  const DeleteActionButton({super.key, required this.onTap});
-
   @override
-  Widget build(BuildContext context) {
-    final label = AppLocalizations.of(context)!.orbit_delete_action;
-    return _ExitActionButton(
-      label: label,
-      icon: Icons.delete_outline,
-      onTap: onTap,
-    );
-  }
+  Widget build(BuildContext context) => _SwipeActionButton(
+    label: AppLocalizations.of(context)!.orbit_unblock_action,
+    icon: Icons.replay,
+    color: const Color(0xFF0F766E),
+    onTap: onTap,
+  );
 }
 
-/// "Leave" action for active groups. It is intentionally separate from Delete
-/// so the swipe consequence is explicit before confirmation.
+class DeleteActionButton extends StatelessWidget {
+  const DeleteActionButton({super.key, required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => _SwipeActionButton(
+    label: AppLocalizations.of(context)!.orbit_delete_action,
+    icon: Icons.delete_outline,
+    color: const Color(0xFFB91C1C),
+    onTap: onTap,
+  );
+}
+
+/// The confirmation for leaving an active group differs from deleting it.
 class LeaveActionButton extends StatelessWidget {
   const LeaveActionButton({super.key, required this.onTap});
 
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
-    return _ExitActionButton(
-      label: AppLocalizations.of(context)!.orbit_leave_action,
-      icon: Icons.logout,
-      onTap: onTap,
-    );
-  }
+  Widget build(BuildContext context) => _SwipeActionButton(
+    label: AppLocalizations.of(context)!.orbit_leave_action,
+    icon: Icons.logout,
+    color: const Color(0xFFB91C1C),
+    onTap: onTap,
+  );
 }
 
-class _ExitActionButton extends StatelessWidget {
-  const _ExitActionButton({
+class ArchiveActionButton extends StatelessWidget {
+  const ArchiveActionButton({super.key, required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => _SwipeActionButton(
+    label: AppLocalizations.of(context)!.orbit_archive_action,
+    icon: Icons.archive_outlined,
+    color: const Color(0xFF92400E),
+    onTap: onTap,
+  );
+}
+
+class _SwipeActionButton extends StatelessWidget {
+  const _SwipeActionButton({
     required this.label,
     required this.icon,
+    required this.color,
     required this.onTap,
   });
 
   final String label;
   final IconData icon;
+  final Color color;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      label: label,
-      button: true,
+  Widget build(BuildContext context) => Semantics(
+    label: label,
+    button: true,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
-      child: ExcludeSemantics(
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFFEF4444), Color(0xFFDC2626)],
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFFDC2626).withValues(alpha: 0.4),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Icon(icon, color: Colors.white, size: 20),
-              ),
-              const SizedBox(height: 2),
-              SizedBox(
-                width: 48,
-                child: Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(12),
           ),
-        ).withPressFeedback(),
-      ),
-    );
-  }
-}
-
-/// "Archive" action button — 48px circle with archive icon + label.
-class ArchiveActionButton extends StatelessWidget {
-  final VoidCallback onTap;
-
-  const ArchiveActionButton({super.key, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFFF59E0B), Color(0xFFF97316)],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFFF97316).withValues(alpha: 0.4),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: Colors.white, size: 18),
+                const SizedBox(height: 2),
+                Flexible(
+                  child: ExcludeSemantics(
+                    child: Text(
+                      label,
+                      style: _actionLabelStyle,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                 ),
               ],
             ),
-            child: const Icon(
-              Icons.archive_outlined,
-              color: Colors.white,
-              size: 20,
-            ),
           ),
-          const SizedBox(height: 2),
-          SizedBox(
-            width: 48,
-            child: Text(
-              AppLocalizations.of(context)!.orbit_archive_action,
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
-    ).withPressFeedback();
-  }
+    ).withPressFeedback(),
+  );
 }
 
-/// "Unarchive" pill button — 116x44 pill with return arrow + text.
 class UnarchiveActionButton extends StatelessWidget {
-  final VoidCallback onTap;
-
   const UnarchiveActionButton({super.key, required this.onTap});
+
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -279,18 +147,7 @@ class UnarchiveActionButton extends StatelessWidget {
         height: 44,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(22),
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF10B981), Color(0xFF06B6D4)],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF10B981).withValues(alpha: 0.4),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          color: const Color(0xFF0F766E),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 14),
         child: Row(
@@ -301,11 +158,7 @@ class UnarchiveActionButton extends StatelessWidget {
             Flexible(
               child: Text(
                 AppLocalizations.of(context)!.orbit_unarchive_action,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: _actionLabelStyle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
