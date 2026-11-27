@@ -5860,11 +5860,12 @@
       "checks": [
         "affected-surfaces",
         "affected-conversation",
+        "affected-groups",
         "affected-feed",
         "affected-identity",
         "affected-calls"
       ],
-      "why": "Shared appearance and palette tokens affect chat, feed, wallpaper and call presentation"
+      "why": "Shared appearance and palette tokens affect chat, group screens, feed, wallpaper and call presentation"
     },
     {
       "id": "bootstrap",
