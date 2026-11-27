@@ -20,16 +20,18 @@ class FeaturePageRoute<T> extends MaterialPageRoute<T> {
   @override
   Duration get transitionDuration {
     if (_reduceMotion) return _fadeDuration;
-    if (_usesCupertino)
+    if (_usesCupertino) {
       return CupertinoRouteTransitionMixin.kTransitionDuration;
+    }
     return const Duration(milliseconds: 420);
   }
 
   @override
   Duration get reverseTransitionDuration {
     if (_reduceMotion) return _fadeDuration;
-    if (_usesCupertino)
+    if (_usesCupertino) {
       return CupertinoRouteTransitionMixin.kTransitionDuration;
+    }
     return const Duration(milliseconds: 280);
   }
 
