@@ -99,7 +99,7 @@ class PostCard extends StatelessWidget {
                   l10n.post_passed_along_by(post.passedByUsername!),
                   style: TextStyle(
                     color: readableColors.textMuted,
-                    fontSize: 10,
+                    fontSize: 11,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -302,7 +302,7 @@ class PostCard extends StatelessWidget {
                         _expiryCopy(post.expiresAt, now, context).toLowerCase(),
                         style: TextStyle(
                           color: readableColors.textMuted,
-                          fontSize: 10,
+                          fontSize: 11,
                           fontWeight: FontWeight.w400,
                         ),
                         textAlign: TextAlign.right,

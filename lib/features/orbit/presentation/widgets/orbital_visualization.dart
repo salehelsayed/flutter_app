@@ -879,7 +879,7 @@ class OrbitalVisualization extends StatelessWidget {
           // face + a drop shadow scrim so the name reads over the dark canvas
           // (HEAD rendered the pale translucent textMuted with no shadow).
           style: TextStyle(
-            fontSize: 9,
+            fontSize: seat.kind == OrbitSeatKind.arc ? 12 : 13,
             fontWeight: FontWeight.w600,
             color: readableColors.textPrimary,
             height: 1,

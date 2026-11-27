@@ -29,7 +29,7 @@ class GroupTypeBadge extends StatelessWidget {
       child: Text(
         _labelForType(type, AppLocalizations.of(context)!),
         style: TextStyle(
-          fontSize: 9,
+          fontSize: 11,
           fontWeight: FontWeight.w600,
           color: typeColor,
           letterSpacing: 0.3,
