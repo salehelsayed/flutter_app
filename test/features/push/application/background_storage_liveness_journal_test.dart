@@ -36,6 +36,8 @@ void main() {
         directoryResolver: () async => root,
         now: () => fixedNow,
         randomNonce: () => 7,
+        // Give disk I/O time to finish. Separate tests cover caller latency.
+        maxCallerImpact: const Duration(seconds: 3),
         buildMode: BackgroundStorageBuildMode.release,
       );
       File(
@@ -451,6 +453,7 @@ void main() {
     final journal = BackgroundStorageLivenessJournal(
       directoryResolver: () async => root,
       randomNonce: () => 3,
+      maxCallerImpact: const Duration(seconds: 3),
       buildMode: BackgroundStorageBuildMode.release,
     );
 
