@@ -92,6 +92,45 @@ class MknoonCallAndroidRuntimeTest {
     }
 
     @Test
+    fun `authenticated presentation retries and ringing keep the first native deadline`() {
+        val callId = UUID.fromString("00000000-0000-4000-8000-000000000401")
+        val otherCallId = UUID.fromString("00000000-0000-4000-8000-000000000402")
+        val now = 1_000L
+        val nativeExpiry = now + 45_000L
+        val wireExpiry = now + 53_400L
+        val ringing = PendingNativeCallDescriptor(
+            nativeCallId = callId,
+            callHandle = callId.toString(),
+            wakeHandle = "00000000-0000-4000-8000-000000000403",
+            receivedAtMs = now,
+            expiresAtMs = nativeExpiry,
+            authenticatedExpiresAtMs = wireExpiry,
+            highestSequence = 1L,
+            terminalEvent = null,
+            events = listOf(
+                PendingNativeCallEvent(
+                    nativeCallId = callId,
+                    sequence = 1L,
+                    eventId = UUID.fromString("00000000-0000-4000-8000-000000000404"),
+                    type = PendingNativeCallEventType.PRESENTED,
+                ),
+            ),
+        )
+
+        val later = now + 10_000L
+        val retry = CallWakePayload(callId, callId.toString(), ringing.wakeHandle, later, wireExpiry)
+        assertTrue(ringing.matchesAuthenticatedPresentationRetry(retry, later))
+        assertFalse(ringing.matchesAuthenticatedPresentationRetry(retry.copy(expiresAtMs = wireExpiry + 1L), later))
+        assertFalse(ringing.matchesAuthenticatedPresentationRetry(retry, nativeExpiry))
+
+        assertTrue(ringing.matchesAuthenticatedRingingInvite(callId, callId.toString(), wireExpiry, nativeExpiry - 1L))
+        assertFalse(ringing.matchesAuthenticatedRingingInvite(callId, callId.toString(), nativeExpiry, now))
+        assertFalse(ringing.matchesAuthenticatedRingingInvite(callId, callId.toString(), wireExpiry + 1L, now))
+        assertFalse(ringing.matchesAuthenticatedRingingInvite(otherCallId, otherCallId.toString(), wireExpiry, now))
+        assertFalse(ringing.matchesAuthenticatedRingingInvite(callId, callId.toString(), wireExpiry, nativeExpiry))
+    }
+
+    @Test
     fun `only an unanswered live incoming descriptor may start ringtone playback`() {
         val callId = UUID.fromString("00000000-0000-4000-8000-000000000401")
         val descriptor = PendingNativeCallDescriptor(

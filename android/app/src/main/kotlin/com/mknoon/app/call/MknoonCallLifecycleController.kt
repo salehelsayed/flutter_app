@@ -1809,6 +1809,7 @@ internal class MknoonCallLifecycleController(
         val direction: PendingNativeCallDirection,
         val receivedAtMs: Long,
         val expiresAtMs: Long,
+        val authenticatedExpiresAtMs: Long?,
         var nextSequence: Long,
         var terminal: Boolean,
         var terminalSequence: Long?,
@@ -1846,6 +1847,7 @@ internal class MknoonCallLifecycleController(
             wakeHandle = "",
             receivedAtMs = receivedAtMs,
             expiresAtMs = expiresAtMs,
+            authenticatedExpiresAtMs = authenticatedExpiresAtMs,
             highestSequence = nextSequence - 1L,
             terminalEvent = selectedEvents.singleOrNull {
                 it.type.isTerminalForAdoptedLifecycle()
@@ -1905,6 +1907,7 @@ internal class MknoonCallLifecycleController(
                     direction = descriptor.direction,
                     receivedAtMs = descriptor.receivedAtMs,
                     expiresAtMs = descriptor.expiresAtMs,
+                    authenticatedExpiresAtMs = descriptor.authenticatedExpiresAtMs,
                     nextSequence = descriptor.highestSequence + 1L,
                     terminal = descriptor.terminalEvent != null,
                     terminalSequence = descriptor.terminalEvent?.sequence,

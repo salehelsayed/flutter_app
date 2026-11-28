@@ -9,6 +9,7 @@ internal data class CallWakePayload(
     val wakeHandle: String,
     val receivedAtMs: Long,
     val expiresAtMs: Long,
+    val authenticatedExpiresAtMs: Long? = null,
 )
 
 internal enum class CallPayloadRejectionReason {

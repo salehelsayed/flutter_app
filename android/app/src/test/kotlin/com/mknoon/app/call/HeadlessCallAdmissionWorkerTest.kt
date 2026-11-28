@@ -818,6 +818,34 @@ class HeadlessCallAdmissionWorkerTest {
     }
 
     @Test
+    fun `only decline accepts a distinct live native deadline and carries the wire expiry to Dart`() = runBlocking {
+        val wireExpiry = NOW_MS + 53_400L
+        val nativeExpiryKey = HeadlessCallAdmissionWorkScheduler.INPUT_NATIVE_EXPIRES_AT_MS
+        val enqueuer = RecordingHeadlessCallAdmissionEnqueuer()
+        val scheduler = HeadlessCallAdmissionWorkScheduler(context, enqueuer, nowMs = { NOW_MS })
+        assertTrue(scheduler.enqueueDeclineReply(declinedDescriptor().copy(authenticatedExpiresAtMs = wireExpiry)))
+        val exact = enqueuer.requests.single().request.workSpec.input
+        var observed: HeadlessCallAdmissionRunIdentity? = null
+        val runner = FakeHeadlessCallAdmissionRunner { identity ->
+            observed = identity
+            validCompletionObject(identity)
+        }
+        val executeBeforeExpiry = execution(runner, { NOW_MS }, presentAuthenticated = { _, _ -> false })
+        executeBeforeExpiry.execute(exact)
+        assertEquals(HeadlessCallAdmissionMode.DECLINE_REPLY, observed?.mode)
+        assertEquals(wireExpiry, observed?.expiresAtMs)
+
+        val wrongMode = Data.Builder().putAll(exact)
+            .putString(HeadlessCallAdmissionWorkScheduler.INPUT_MODE, HeadlessCallAdmissionMode.RINGING_REPLY.wireName)
+            .build()
+        val noSplit = Data.Builder().putAll(exact).putLong(nativeExpiryKey, wireExpiry).build()
+        executeBeforeExpiry.execute(wrongMode)
+        executeBeforeExpiry.execute(noSplit)
+        execution(runner, { EXPIRES_AT_MS }, presentAuthenticated = { _, _ -> false }).execute(exact)
+        assertEquals(1, runner.runCalls)
+    }
+
+    @Test
     fun `scheduler creates one opaque unique expedited connected job for exact wake identity`() {
         val enqueuer = RecordingHeadlessCallAdmissionEnqueuer()
         val scheduler = HeadlessCallAdmissionWorkScheduler(

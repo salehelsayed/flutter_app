@@ -1,5 +1,6 @@
 package com.mknoon.app.call
 
+import java.util.Base64
 import java.util.UUID
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -142,6 +143,23 @@ class PendingNativeCallStoreTest {
         repeat(2) { assertNull(callStore.observeProtectedJournal()) }
         assertTrue("Observer pruned durable receipt", receipt.contentEquals(backend.committedReceiptBytes()))
         assertEquals(before, backend.replaceCalls)
+    }
+
+    @Test
+    fun `version four journal uses its persisted expiry for both deadlines`() {
+        val versionFourRecord = Base64.getDecoder().decode(
+            "TUtOQwAAAAQAESIzRFVmd4iZqrvM3e7/AAAAJDAwMTEyMjMzLTQ0NTUtNjY3Ny04ODk5LWFhYmJj" +
+                "Y2RkZWVmZgAAACA1MDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZgAAAaMYXFAAAAABoxhc" +
+                "/8gAAAAAAAAAAAAAAAROT05FAAAACVBSRV9TVEFSVAAAAAhJTkNPTUlORwAAAAAAAAAAAAAAAAAA" +
+                "AAAAAAAAAAAAAAA=",
+        )
+        val store = store(InMemoryPendingNativeCallBackend(versionFourRecord))
+        val descriptor = requireNotNull(store.snapshot())
+        assertEquals(NATIVE_CALL_ID_A, descriptor.nativeCallId)
+        assertEquals(NOW_MS + 45_000L, descriptor.expiresAtMs)
+        assertEquals(descriptor.expiresAtMs, descriptor.wireExpiresAtMs)
+        assertNull(descriptor.authenticatedExpiresAtMs)
+        assertEquals(descriptor, duplicate(store.create(payloadA())).descriptor)
     }
 
     @Test

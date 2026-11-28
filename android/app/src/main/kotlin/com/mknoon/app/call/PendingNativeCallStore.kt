@@ -115,7 +115,10 @@ internal data class PendingNativeCallDescriptor(
     val lastAcknowledgedSequence: Long = 0L,
     val direction: PendingNativeCallDirection = PendingNativeCallDirection.INCOMING,
     val schemaVersion: Int = PENDING_NATIVE_CALL_SCHEMA_VERSION,
-)
+    val authenticatedExpiresAtMs: Long? = null,
+) {
+    val wireExpiresAtMs: Long get() = authenticatedExpiresAtMs ?: expiresAtMs
+}
 
 internal sealed interface PendingNativeCallCreateResult {
     data class Created(
@@ -181,7 +184,7 @@ internal class PendingNativeCallStore(
         direction: PendingNativeCallDirection,
     ): PendingNativeCallCreateResult =
         synchronized(processLock) {
-            if (!validPayload(payload)) {
+            if (!validPayload(payload, direction)) {
                 return@synchronized PendingNativeCallCreateResult.PersistenceFailure
             }
             when (val receipt = readReceipt()) {
@@ -425,6 +428,7 @@ internal class PendingNativeCallStore(
             terminalEvent = null,
             events = emptyList(),
             direction = direction,
+            authenticatedExpiresAtMs = payload.authenticatedExpiresAtMs,
         )
         return when (commit(descriptor)) {
             CommitResult.COMMITTED -> PendingNativeCallCreateResult.Created(descriptor)
@@ -434,14 +438,17 @@ internal class PendingNativeCallStore(
         }
     }
 
-    private fun validPayload(payload: CallWakePayload): Boolean {
+    private fun validPayload(payload: CallWakePayload, direction: PendingNativeCallDirection): Boolean {
         val canonicalCallId = runCatching { UUID.fromString(payload.callHandle) }.getOrNull()
         if (
             !CANONICAL_CALL_HANDLE.matches(payload.callHandle) ||
             !CALL_RANDOM_ID.matches(payload.wakeHandle) ||
             canonicalCallId != payload.nativeCallId ||
             payload.receivedAtMs < 0L ||
-            payload.expiresAtMs <= payload.receivedAtMs
+            payload.expiresAtMs <= payload.receivedAtMs ||
+            !validAuthenticatedExpiry(
+                payload.receivedAtMs, payload.expiresAtMs, payload.authenticatedExpiresAtMs, direction,
+            )
         ) {
             return false
         }
@@ -906,6 +913,7 @@ private object PendingNativeCallCodec {
                         output.writeUuid(event.eventId)
                         output.writeUtf8(event.type.name)
                     }
+                    output.writeLong(descriptor.authenticatedExpiresAtMs ?: 0L)
                 }
                 buffer.toByteArray()
             }
@@ -979,6 +987,11 @@ private object PendingNativeCallCodec {
                     type = type,
                 )
             }
+            val authenticatedExpiresAtMs = if (schemaVersion >= 5) {
+                input.readLong().takeUnless { it == 0L }
+            } else {
+                null
+            }
             if (input.available() != 0) return null
             val terminalEvent = when (terminalSequence) {
                 0L -> null
@@ -1002,6 +1015,7 @@ private object PendingNativeCallCodec {
                 lastAcknowledgedSequence = lastAcknowledgedSequence,
                 direction = direction,
                 schemaVersion = PENDING_NATIVE_CALL_SCHEMA_VERSION,
+                authenticatedExpiresAtMs = authenticatedExpiresAtMs,
             ).takeIf { it.isStructurallyValid() }
         } catch (_: Exception) {
             null
@@ -1116,6 +1130,7 @@ private fun PendingNativeCallDescriptor.matches(
         callHandle == payload.callHandle &&
         direction == expectedDirection &&
         expiresAtMs == payload.expiresAtMs &&
+        authenticatedExpiresAtMs == payload.authenticatedExpiresAtMs &&
         (
             expectedDirection == PendingNativeCallDirection.OUTGOING ||
                 (
@@ -1149,6 +1164,7 @@ private fun CallWakePayload.toReceiptDuplicateDescriptor(
         terminalEvent = null,
         events = emptyList(),
         direction = direction,
+        authenticatedExpiresAtMs = authenticatedExpiresAtMs,
     )
 
 private fun callHandleDigest(callHandle: String): ByteArray? {
@@ -1163,6 +1179,17 @@ private fun callHandleDigest(callHandle: String): ByteArray? {
 private fun saturatingAdd(left: Long, right: Long): Long =
     if (right > 0L && left > Long.MAX_VALUE - right) Long.MAX_VALUE else left + right
 
+private fun validAuthenticatedExpiry(
+    receivedAtMs: Long,
+    expiresAtMs: Long,
+    authenticatedExpiresAtMs: Long?,
+    direction: PendingNativeCallDirection,
+): Boolean = authenticatedExpiresAtMs == null ||
+    (direction == PendingNativeCallDirection.INCOMING &&
+        expiresAtMs - receivedAtMs == CallPayloadParser.MAX_FUTURE_SKEW_MS &&
+        authenticatedExpiresAtMs > expiresAtMs &&
+        authenticatedExpiresAtMs - receivedAtMs <= CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS)
+
 private fun PendingNativeCallDescriptor.isStructurallyValid(): Boolean {
     val canonicalCallId = runCatching { UUID.fromString(callHandle) }.getOrNull()
     if (
@@ -1171,6 +1198,7 @@ private fun PendingNativeCallDescriptor.isStructurallyValid(): Boolean {
         canonicalCallId != nativeCallId ||
         receivedAtMs < 0L ||
         expiresAtMs <= receivedAtMs ||
+        !validAuthenticatedExpiry(receivedAtMs, expiresAtMs, authenticatedExpiresAtMs, direction) ||
         highestSequence < 0L ||
         lastAcknowledgedSequence < 0L ||
         lastAcknowledgedSequence > highestSequence ||
@@ -1232,4 +1260,4 @@ private fun PendingNativeCallEventType.isTerminal(): Boolean = when (this) {
     -> false
 }
 
-private const val PENDING_NATIVE_CALL_SCHEMA_VERSION = 4
+private const val PENDING_NATIVE_CALL_SCHEMA_VERSION = 5

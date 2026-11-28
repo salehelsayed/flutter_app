@@ -242,6 +242,7 @@ internal class HeadlessCallAdmissionWorkScheduler(
         internal const val INPUT_CALL_ID = "call_id"
         internal const val INPUT_WAKE_HANDLE = "wake_handle"
         internal const val INPUT_EXPIRES_AT_MS = "expires_at_ms"
+        internal const val INPUT_NATIVE_EXPIRES_AT_MS = "native_expires_at_ms"
         internal const val INPUT_MODE = "mode"
         private const val UNIQUE_PREFIX = "mknoon-headless-call-admission-"
         private const val WORK_TAG = "mknoon-headless-call-admission"
@@ -283,19 +284,21 @@ internal class HeadlessCallAdmissionWorkScheduler(
     /**
      * Plan 404: a natively declined call without a Dart owner. One decline-reply
      * run for the same call, serialized behind any admission job of that call
-     * (same unique name, APPEND_OR_REPLACE) and carrying the mode as one extra
-     * input key plus the descriptor's own wake handle and expiry.
+     * (same unique name, APPEND_OR_REPLACE). The wire expiry binds the mailbox
+     * row, and a distinct native expiry bounds the local worker deadline.
      */
     fun enqueueDeclineReply(descriptor: PendingNativeCallDescriptor): Boolean {
         val observedNow = runCatching(nowMs).getOrNull() ?: return false
         val callId = descriptor.nativeCallId.toString()
+        val wireExpiresAtMs = descriptor.wireExpiresAtMs
         if (
             observedNow < 0L ||
             descriptor.callHandle != callId ||
             !CANONICAL_CALL_HANDLE.matches(callId) ||
             !CALL_RANDOM_ID.matches(descriptor.wakeHandle) ||
             descriptor.expiresAtMs <= observedNow ||
-            descriptor.expiresAtMs - observedNow > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS
+            wireExpiresAtMs < descriptor.expiresAtMs ||
+            wireExpiresAtMs - observedNow > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS
         ) {
             return false
         }
@@ -309,8 +312,13 @@ internal class HeadlessCallAdmissionWorkScheduler(
                 Data.Builder()
                     .putString(INPUT_CALL_ID, callId)
                     .putString(INPUT_WAKE_HANDLE, descriptor.wakeHandle)
-                    .putLong(INPUT_EXPIRES_AT_MS, descriptor.expiresAtMs)
+                    .putLong(INPUT_EXPIRES_AT_MS, wireExpiresAtMs)
                     .putString(INPUT_MODE, HeadlessCallAdmissionMode.DECLINE_REPLY.wireName)
+                    .apply {
+                        if (wireExpiresAtMs > descriptor.expiresAtMs) {
+                            putLong(INPUT_NATIVE_EXPIRES_AT_MS, descriptor.expiresAtMs)
+                        }
+                    }
                     .build(),
             )
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
@@ -502,7 +510,7 @@ internal class HeadlessCallAdmissionExecution(
                 executionFailure = "canceled"
                 runner.requestStop()
             } else {
-                val remainingMillis = invocation.expiresAtMs - observedNow
+                val remainingMillis = invocation.deadlineAtMs - observedNow
                 completion = withTimeout(minOf(timeoutMillis, remainingMillis)) {
                     runner.run(identity)
                 }
@@ -628,6 +636,7 @@ internal class HeadlessCallAdmissionExecution(
         val wakeHandle: String,
         val expiresAtMs: Long,
         val mode: HeadlessCallAdmissionMode,
+        val deadlineAtMs: Long,
     )
 
     private fun parseInput(inputData: Data, observedNow: Long): Invocation? {
@@ -636,9 +645,12 @@ internal class HeadlessCallAdmissionExecution(
             HeadlessCallAdmissionWorkScheduler.INPUT_WAKE_HANDLE,
             HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS,
         )
-        val mode = when (inputData.keyValueMap.keys) {
+        val replyKeys = admissionKeys + HeadlessCallAdmissionWorkScheduler.INPUT_MODE
+        val nativeExpiryKey = HeadlessCallAdmissionWorkScheduler.INPUT_NATIVE_EXPIRES_AT_MS
+        val fields = inputData.keyValueMap
+        val mode = when (fields.keys) {
             admissionKeys -> HeadlessCallAdmissionMode.ADMISSION
-            admissionKeys + HeadlessCallAdmissionWorkScheduler.INPUT_MODE ->
+            replyKeys, replyKeys + nativeExpiryKey ->
                 HeadlessCallAdmissionMode.fromWireName(
                     inputData.getString(HeadlessCallAdmissionWorkScheduler.INPUT_MODE),
                 )?.takeIf { it != HeadlessCallAdmissionMode.ADMISSION } ?: return null
@@ -650,9 +662,8 @@ internal class HeadlessCallAdmissionExecution(
         val wakeHandle = inputData.getString(
             HeadlessCallAdmissionWorkScheduler.INPUT_WAKE_HANDLE,
         ) ?: return null
-        val expiresAtMs = inputData.keyValueMap[
-            HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS
-        ] as? Long ?: return null
+        val expiresAtMs = fields[HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS] as? Long
+            ?: return null
         if (
             !CANONICAL_CALL_HANDLE.matches(callId) ||
             runCatching { UUID.fromString(callId).toString() }.getOrNull() != callId ||
@@ -662,7 +673,18 @@ internal class HeadlessCallAdmissionExecution(
         ) {
             return null
         }
-        return Invocation(callId, wakeHandle, expiresAtMs, mode)
+        val deadlineAtMs = if (nativeExpiryKey in fields) {
+            if (mode != HeadlessCallAdmissionMode.DECLINE_REPLY) return null
+            val nativeExpiry = fields[nativeExpiryKey] as? Long ?: return null
+            if (
+                nativeExpiry <= observedNow || nativeExpiry >= expiresAtMs ||
+                expiresAtMs - nativeExpiry > CallPayloadParser.MAX_CALLER_CLOCK_LEAD_MS
+            ) return null
+            nativeExpiry
+        } else {
+            expiresAtMs
+        }
+        return Invocation(callId, wakeHandle, expiresAtMs, mode, deadlineAtMs)
     }
 }
 
