@@ -289,11 +289,27 @@ def validate(root, rules, files=None):
     return files
 
 
+def release_legacy_routes(rules, root):
+    mappings = [row for row in rules.get('full_inventory', {}).get('mappings', [])
+                if row.get('release_ownership_only') is True and row.get('owner') == 'full-legacy']
+    if not mappings:
+        return {}
+    from legacy_target_contracts import contracts
+    audited = contracts(root)['full']
+    return {path: (row['route'], audited[row['route']]['sources'][path])
+            for row in mappings if row.get('route') in audited
+            for path in row.get('patterns', [])
+            if path in audited[row['route']].get('owns', [])
+            and path in audited[row['route']].get('sources', {})}
+
+
 def select(rules, changes, mode, files, root, *, build_label=''):
     selected = {}
     areas = set()
     unmapped = []
     excluded = []
+    legacy_owned = {}
+    legacy_routes = release_legacy_routes(rules, root) if mode == 'release' else {}
     label = build_label.strip()
     versioned_label = re.fullmatch(r'[^()]+\(([0-9]+)\)', label)
     build = versioned_label[1] if versioned_label else label
@@ -344,12 +360,16 @@ def select(rules, changes, mode, files, root, *, build_label=''):
                     rules['checks'][owner['id']] = {**owner, 'paths': [path]}
                     add(owner['id'], 'changed source-owned assertion recipe: ' + path)
                     unmapped = [p for p in unmapped if p != path]
+                elif path in legacy_routes and file_hash(root / path) == legacy_routes[path][1]:
+                    legacy_owned[path] = legacy_routes[path][0]
+                    unmapped = [p for p in unmapped if p != path]
                 else:
                     unmapped.append(path)
     return {'selected': [{'id': cid, 'reasons': sorted(set(why)), **rules['checks'][cid]}
                          for cid, why in sorted(selected.items())],
             'affected_areas': sorted(areas), 'unmapped_changes': sorted(set(unmapped)),
             'documentation_exclusions': sorted(set(excluded)),
+            **({'unexecuted_full_legacy_owners': legacy_owned} if legacy_owned else {}),
             'not_selected': sorted(set(rules['checks']) - set(selected))}
 
 
@@ -882,7 +902,8 @@ def plan_fingerprint(plan):
         if row['kind'] == 'python':
             row['command'] = ['python3', *row['command'][1:]]
         selected.append(row)
-    return digest({**{k: plan.get(k) for k in (
+    legacy_owned = {k: plan[k] for k in ('unexecuted_full_legacy_owners',) if k in plan}
+    return digest({**legacy_owned, **{k: plan.get(k) for k in (
         'mode', 'baseline', 'candidate_build', 'identity', 'changes',
         'not_selected', 'unmapped_changes', 'ci', 'obligations', 'coverage_gaps', 'runner_expansions', 'execution_settings')}, 'selected': selected})
 
@@ -1020,6 +1041,8 @@ def _main(argv=None, managed=None):
             print(f"Selected {len(plan['selected'])} checks; {len(plan['changes'])} change rows; areas: {', '.join(plan['affected_areas'])}")
             for c in plan['selected']:
                 print(c['id'] + ': ' + '; '.join(c['reasons'])[:320] + (' [BLOCKED: ' + '; '.join(c['blocked_prerequisites']) + ']' if c['blocked_prerequisites'] else ''))
+            for path, route in sorted(plan.get('unexecuted_full_legacy_owners', {}).items()):
+                print(f'{path}: owned by full-legacy, not executed ({route})')
             print('Plan:', directory / 'plan.json')
             return 2 if plan['unmapped_changes'] else 0
         return execute_plan(args, root, rules, plan, files, device_config, matrix, directory, started)

@@ -443,6 +443,29 @@ class RepositoryMappingRegressionTest(unittest.TestCase):
     def select_path(self, path):
         return checks.select(copy.deepcopy(self.rules), [{'path': path, 'status': 'M'}], 'change', [], self.root)
 
+    def test_store_release_selection_keeps_audited_legacy_routes_unexecuted(self):
+        baseline = checks.resolve_ref(self.root, '49f8d32331908298f43850bd2147f8a9fd1abf05')
+        changes = checks.changed_files(self.root, baseline, local=False)
+        files = checks.source_files(self.root)
+        plan = checks.select(copy.deepcopy(self.rules), changes, 'release', files, self.root)
+
+        self.assertEqual(plan['unmapped_changes'], [])
+        expected = {
+            'integration_test/' + filename: 'integration_test ' + filename
+            for filename in ('conversation_bridge_test.dart', 'smoke_test.dart',
+                             'soak_e2e_test.dart', 'transport_e2e_test.dart',
+                             'wifi_relay_fallback_smoke_test.dart')
+        }
+        self.assertEqual(plan['unexecuted_full_legacy_owners'], expected)
+        self.assertNotIn('full-legacy', {row['id'] for row in plan['selected']})
+
+        smoke = [{'path': 'integration_test/smoke_test.dart', 'status': 'M'}]
+        change = checks.select(copy.deepcopy(self.rules), smoke, 'change', files, self.root)
+        self.assertEqual(change['unmapped_changes'], [smoke[0]['path']])
+        with mock.patch.object(checks, 'file_hash', return_value='stale'):
+            release = checks.select(copy.deepcopy(self.rules), smoke, 'release', files, self.root)
+        self.assertEqual(release['unmapped_changes'], [smoke[0]['path']])
+
     def test_signed_video_evidence_is_required_only_for_release_build_133(self):
         for mode, label, expected in (
             ('release', '133', True),

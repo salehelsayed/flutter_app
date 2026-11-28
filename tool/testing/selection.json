@@ -144,7 +144,8 @@
         "test/features/conversation/integration/direct_text_restart_sqlite_test.dart",
         "test/features/conversation/integration/delivery_receipt_outbox_sqlite_test.dart",
         "test/core/services/pending_message_retrier_contact_key_test.dart",
-        "test/core/services/pending_message_retrier_contact_key_serialization_test.dart"
+        "test/core/services/pending_message_retrier_contact_key_serialization_test.dart",
+        "test/core/resilience/c4_partial_drain_test.dart"
       ],
       "boundary": "Concurrent inbox custody, exact 100-message ordering, both-peer SQLite reopen, sender interruption checkpoints, protected inbox replay and canonical deduplication",
       "limitations": "Includes real production-schema SQLite repositories/listener/staging and durable authored-text recovery with fake transport and crypto; all four custody checkpoints execute without a known-gap skip. Abandoned Dart continuations model restart; OS process death, native SQLCipher, live linked topology/disconnection/relay restart and signed artifacts remain separate",
@@ -1247,6 +1248,7 @@
     "group-media-schema-contract": {
       "kind": "flutter",
       "paths": [
+        "test/core/debug/group_media_ios_background_e2e_test.dart",
         "test/core/debug/group_media_reliability_e2e_test.dart",
         "test/core/debug/group_media_reliability_sender_test.dart",
         "test/core/debug/group_media_reliability_strict_barrier_test.dart",
@@ -6196,6 +6198,26 @@
         "scripts/check_glossary.py",
         "scripts/check_reliability_simulation_discovery.sh"
       ]
+    },
+    {
+      "id": "partial-drain-host-contract",
+      "patterns": [
+        "test/core/resilience/c4_partial_drain_test.dart"
+      ],
+      "checks": [
+        "offline-recovery"
+      ],
+      "why": "Partial drain replay and recovery require their exact host fixture."
+    },
+    {
+      "id": "group-media-ios-background-host-contract",
+      "patterns": [
+        "test/core/debug/group_media_ios_background_e2e_test.dart"
+      ],
+      "checks": [
+        "group-media-schema-contract"
+      ],
+      "why": "Changes to the host fixture require its proof contract checks."
     },
     {
       "id": "group-media-schema-harness",
@@ -11865,11 +11887,48 @@
       },
       {
         "owner": "full-legacy",
+        "route": "integration_test conversation_bridge_test.dart",
+        "patterns": [
+          "integration_test/conversation_bridge_test.dart"
+        ],
+        "release_ownership_only": true,
+        "reason": "Exact audited device route retained in full regression. The release plan records ownership without executing the device fixture."
+      },
+      {
+        "owner": "full-legacy",
         "route": "integration_test smoke_test.dart",
         "patterns": [
           "integration_test/smoke_test.dart"
         ],
-        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+        "release_ownership_only": true,
+        "reason": "Exact audited device route retained in full regression. The release plan records ownership without executing the device fixture."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test soak_e2e_test.dart",
+        "patterns": [
+          "integration_test/soak_e2e_test.dart"
+        ],
+        "release_ownership_only": true,
+        "reason": "Exact audited device route retained in full regression. The release plan records ownership without executing the device fixture."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test transport_e2e_test.dart",
+        "patterns": [
+          "integration_test/transport_e2e_test.dart"
+        ],
+        "release_ownership_only": true,
+        "reason": "Exact audited device route retained in full regression. The release plan records ownership without executing the device fixture."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test wifi_relay_fallback_smoke_test.dart",
+        "patterns": [
+          "integration_test/wifi_relay_fallback_smoke_test.dart"
+        ],
+        "release_ownership_only": true,
+        "reason": "Exact audited device route retained in full regression. The release plan records ownership without executing the device fixture."
       },
       {
         "owner": "full-legacy",
