@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/presentation/screens/friend_picker_screen.dart';
@@ -40,6 +41,8 @@ void main() {
     VoidCallback? onSend,
     VoidCallback? onClose,
     BackgroundReadableColors? readableColors,
+    Locale locale = const Locale('en'),
+    TextScaler? textScaler,
   }) {
     final screen = SizedBox(
       height: 600,
@@ -59,7 +62,13 @@ void main() {
     );
 
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
+      builder: textScaler == null
+          ? null
+          : (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+              child: child!,
+            ),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
@@ -100,8 +109,82 @@ void main() {
 
     final listView = tester.widget<ListView>(find.byType(ListView));
     expect(listView.shrinkWrap, isFalse);
-    expect(listView.itemExtent, 60);
+    expect(tester.getSize(find.byKey(const ValueKey('peer-A'))).height, 60);
   });
+
+  for (final (locale, direction, friendName) in const [
+    (Locale('en'), TextDirection.ltr, 'Alexandra Riverside'),
+    (Locale('ar'), TextDirection.rtl, 'عبد الرحمن الطويل'),
+  ]) {
+    for (final scale in [1.0, 3.0]) {
+      testWidgets(
+        'BL-110 friend and Introduce labels fit at ${scale}x ${direction.name}',
+        (tester) async {
+          const deadline = Duration(seconds: 3);
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = const Size(390, 844);
+          addTearDown(tester.view.reset);
+          final toggles = <String>[];
+          var introductions = 0;
+          await tester
+              .pumpWidget(
+                buildSubject(
+                  locale: locale,
+                  textScaler: TextScaler.linear(scale),
+                  availableFriends: [makeContact('peer-long', friendName)],
+                  selectedPeerIds: {'peer-long'},
+                  onToggleFriend: toggles.add,
+                  onSend: () => introductions++,
+                ),
+              )
+              .timeout(deadline);
+
+          final context = tester.element(find.byType(FriendPickerScreen));
+          expect(Directionality.of(context), direction);
+          final introduce = AppLocalizations.of(context)!
+              .picker_introduce_count(1);
+          final row = find.byKey(const ValueKey('peer-long'));
+          final button = find.byType(ElevatedButton);
+          final clipped = <String>[];
+          for (final (label, control) in [
+            (friendName, row),
+            (introduce, button),
+          ]) {
+            final text = find.text(label);
+            expect(text.hitTestable(), findsOneWidget);
+            final paragraph = tester.renderObject<RenderParagraph>(text);
+            final visible = tester
+                .getRect(text)
+                .intersect(tester.getRect(control))
+                .shift(-paragraph.localToGlobal(Offset.zero))
+                .inflate(1);
+            final boxes = paragraph.getBoxesForSelection(
+              TextSelection(baseOffset: 0, extentOffset: label.length),
+            );
+            if (boxes.isEmpty ||
+                paragraph.didExceedMaxLines ||
+                boxes.any(
+                  (box) =>
+                      !visible.contains(Offset(box.left, box.top)) ||
+                      !visible.contains(Offset(box.right, box.bottom)),
+                )) {
+              clipped.add(label);
+            }
+          }
+          expect(tester.takeException(), isNull);
+          expect(
+            clipped,
+            isEmpty,
+            reason: 'All label glyphs fit in their controls',
+          );
+          await tester.tap(find.text(friendName)).timeout(deadline);
+          await tester.tap(find.text(introduce)).timeout(deadline);
+          expect(toggles, ['peer-long']);
+          expect(introductions, 1);
+        },
+      );
+    }
+  }
 
   testWidgets('search filters list by name', (tester) async {
     await tester.pumpWidget(buildSubject(searchQuery: 'Ali'));
