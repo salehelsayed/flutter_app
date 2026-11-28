@@ -196,13 +196,22 @@ class _InnerCircleInteractiveSurfaceState
 
   DateTime get _now => (widget.nowProvider ?? DateTime.now)();
 
-  /// The notes this surface can show: the user's own, then the ring friends'.
+  static const _ringSeatCount = kOrbitRing1Count + kOrbitRing2Count;
+
+  /// Notes on the center avatar and inner rings.
   Iterable<OrbitThoughtNote> get _liveThoughts sync* {
     final now = _now;
     final selfPeerId = widget.userPeerId;
     final own = selfPeerId == null ? null : widget.thoughtsByPeerId[selfPeerId];
     if (own != null && own.expiresAt.isAfter(now)) yield own;
-    for (final item in widget.items.take(kOrbitRing1Count + kOrbitRing2Count)) {
+    yield* _liveFriendThoughts(widget.items.take(_ringSeatCount), now);
+  }
+
+  Iterable<OrbitThoughtNote> _liveFriendThoughts(
+    Iterable<OrbitItem> items,
+    DateTime now,
+  ) sync* {
+    for (final item in items) {
       if (item is! OrbitFriendItem) continue;
       final note = widget.thoughtsByPeerId[item.friend.peerId];
       if (note != null && note.expiresAt.isAfter(now)) yield note;
@@ -225,9 +234,15 @@ class _InnerCircleInteractiveSurfaceState
   void _armThoughtExpiry() {
     _thoughtExpiryTimer?.cancel();
     _thoughtExpiryTimer = null;
-    if (!_thoughtsVisible) return;
     DateTime? earliest;
-    for (final note in _liveThoughts) {
+    final arcNotes = _liveFriendThoughts(
+      widget.items.skip(_ringSeatCount),
+      _now,
+    );
+    final expiring = _thoughtsVisible
+        ? [..._liveThoughts, ...arcNotes]
+        : arcNotes;
+    for (final note in expiring) {
       if (earliest == null || note.expiresAt.isBefore(earliest)) {
         earliest = note.expiresAt;
       }
@@ -323,8 +338,7 @@ class _InnerCircleInteractiveSurfaceState
     // A first thought can arrive during a size-control session that began
     // with no notes. Preserve that session/geometry and keep notes put away;
     // letting them appear would overlap the still-active sculpt controls.
-    // Open "+N" arcs likewise keep a first thought's notes off the arc faces
-    // until the arcs close.
+    // Open arcs also postpone ring notes until the arcs close.
     if ((_editing || _overflowExpanded) && _notesOut) {
       _notesAwayCause = _overflowExpanded
           ? _NotesAwayCause.arcs

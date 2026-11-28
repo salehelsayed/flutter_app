@@ -244,12 +244,15 @@ class OrbitalVisualization extends StatelessWidget {
 
     final now = (nowProvider ?? DateTime.now)();
     final notes = <int, OrbitThoughtNote>{};
+    final arcNotes = <int, OrbitThoughtNote>{};
     for (final seat in layout.seats) {
-      if (seat.kind == OrbitSeatKind.arc) continue;
       final item = items[seat.index];
       if (item is! OrbitFriendItem) continue;
       final note = thoughtsByPeerId[item.friend.peerId];
-      if (note != null && note.expiresAt.isAfter(now)) notes[seat.index] = note;
+      if (note != null && note.expiresAt.isAfter(now)) {
+        final seatNotes = seat.kind == OrbitSeatKind.arc ? arcNotes : notes;
+        seatNotes[seat.index] = note;
+      }
     }
     final selfPeerId = userPeerId;
     final ownNote = selfPeerId == null ? null : thoughtsByPeerId[selfPeerId];
@@ -271,6 +274,27 @@ class OrbitalVisualization extends StatelessWidget {
         }
       };
     }
+
+    Widget thoughtBadge(
+      OrbitThoughtNote note,
+      String? name,
+      VoidCallback? tap,
+    ) => Semantics(
+      excludeSemantics: true,
+      label: OrbitThoughtNoteBubble.semanticLabel(
+        context,
+        note,
+        authorName: name,
+      ),
+      button: tap != null,
+      onTap: tap,
+      child: GestureDetector(
+        key: ValueKey('orbit-thought-tap-badge-${note.postId}'),
+        behavior: HitTestBehavior.opaque,
+        onTap: tap,
+        child: _ThoughtBadge(isRead: note.isRead),
+      ).withPressFeedback(),
+    );
 
     final relationshipArcs = <OrbitRelationshipArc>[];
     final showRelationshipArcs =
@@ -354,6 +378,15 @@ class OrbitalVisualization extends StatelessWidget {
     final densityScale = v2 && v2Options.densityScale
         ? orbitalQuietV2ScaleForCount(items.length)
         : 1.0;
+    final overflow = layout.badge;
+    final overflowSize = onBadgeTap == null ? 28.0 : 44.0;
+    final overflowTarget = overflow == null
+        ? null
+        : Rect.fromCenter(
+            center: Offset(overflow.dx, overflow.dy),
+            width: overflowSize,
+            height: overflowSize,
+          );
 
     final placements = <int, OrbitThoughtPlacement>{};
     final avatarTargets = <int, Rect>{};
@@ -380,8 +413,6 @@ class OrbitalVisualization extends StatelessWidget {
           final byTime = right.compareTo(left);
           return byTime == 0 ? a.key.compareTo(b.key) : byTime;
         });
-      final overflow = layout.badge;
-      final overflowSize = onBadgeTap == null ? 28.0 : 44.0;
       placements.addAll(
         layoutOrbitThoughts(
           canvas: Rect.fromLTWH(-cx, -cy, boxWidth, boxHeight).deflate(6),
@@ -401,12 +432,7 @@ class OrbitalVisualization extends StatelessWidget {
           otherObstacles: [
             if (selfPeerId != null && onComposeThought != null)
               const Rect.fromLTWH(4, 4, 44, 44),
-            if (overflow != null)
-              Rect.fromCenter(
-                center: Offset(overflow.dx, overflow.dy),
-                width: overflowSize,
-                height: overflowSize,
-              ),
+            ?overflowTarget,
           ],
         ),
       );
@@ -542,6 +568,7 @@ class OrbitalVisualization extends StatelessWidget {
       );
     }
 
+    final arcBadges = <Widget>[];
     // Seats — rings always; arcs only when expanded.
     for (final seat in layout.seats) {
       final isArc = seat.kind == OrbitSeatKind.arc;
@@ -644,23 +671,55 @@ class OrbitalVisualization extends StatelessWidget {
           ),
         );
       }
+      final arcNote = arcNotes[seat.index];
+      if (arcNote != null) {
+        final tap = noteTap(arcNote);
+        final target = Rect.fromCenter(
+          center: Offset(seat.dx, seat.dy),
+          width: tapTargetSize,
+          height: tapTargetSize,
+        );
+        final preferred = orbitThoughtBadgeRect(target, target, mirrored);
+        final coversFace = layout.seats.any(
+          (other) => preferred.contains(Offset(other.dx, other.dy)),
+        );
+        final underOverflow =
+            overflowTarget?.contains(preferred.center) ?? false;
+        final badgeRect = coversFace || underOverflow
+            ? orbitThoughtBadgeRect(target, target, !mirrored)
+            : preferred;
+        arcBadges.add(
+          Positioned.fromRect(
+            key: ValueKey('orbit-thought-badge-${seat.index}'),
+            rect: badgeRect.shift(Offset(cx, cy)),
+            child: IgnorePointer(
+              ignoring: tap == null,
+              child: Opacity(
+                opacity: _dimFor(seat.index),
+                child: thoughtBadge(arcNote, _displayName(item), tap),
+              ),
+            ),
+          ),
+        );
+      }
     }
+    children.addAll(arcBadges);
 
     // Overflow badge (present whenever the population overflows). Its box is
     // 44px when interactive (−8px inset around the 28px visual) else 28px.
-    if (layout.badge != null) {
-      final badge = layout.badge!;
-      final badgeHalf = onBadgeTap != null ? 22.0 : 14.0;
+    if (overflow != null) {
+      final target = overflowTarget!;
       children.add(
         Positioned(
           // 201 INV-201-2: the single badge keeps a stable slot key so node/label
           // insertions before it (label toggle, arc expand/collapse) never
           // re-inflate it (which replayed its 1.5s entrance / blanked it).
           key: const ValueKey('orbit-overflow-badge-seat'),
-          left: cx + badge.dx - badgeHalf,
-          top: cy + badge.dy - badgeHalf,
+          left: cx + target.left,
+          top: cy + target.top,
           child: OverflowBadge(
-            count: badge.overflowCount,
+            count: overflow.overflowCount,
+            hiddenThoughtCount: arcNotes.length,
             expanded: overflowExpanded,
             onTap: onBadgeTap,
           ),
@@ -682,22 +741,7 @@ class OrbitalVisualization extends StatelessWidget {
       final badge = placement.side == null;
       final Widget content;
       if (badge) {
-        content = Semantics(
-          excludeSemantics: true,
-          label: OrbitThoughtNoteBubble.semanticLabel(
-            context,
-            note,
-            authorName: name,
-          ),
-          button: tap != null,
-          onTap: tap,
-          child: GestureDetector(
-            key: ValueKey('orbit-thought-tap-badge-${note.postId}'),
-            behavior: HitTestBehavior.opaque,
-            onTap: tap,
-            child: _ThoughtBadge(isRead: note.isRead),
-          ).withPressFeedback(),
-        );
+        content = thoughtBadge(note, name, tap);
       } else if (name == null) {
         content = OrbitThoughtNoteBubble.own(
           note: note,

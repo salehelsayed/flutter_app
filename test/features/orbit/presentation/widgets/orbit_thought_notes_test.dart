@@ -6,6 +6,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
@@ -16,6 +17,8 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualiz
 import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../shared/bidi_layout_checks.dart';
 
 OrbitFriend _friend(int index) => OrbitFriend(
@@ -867,15 +870,22 @@ void main() {
     },
   );
 
-  Widget arcSurface(Map<String, OrbitThoughtNote> notes) => wrap(
+  Widget arcSurface(
+    Map<String, OrbitThoughtNote> notes, {
+    List<OrbitItem>? members,
+    DateTime Function()? now,
+    ValueChanged<OrbitFriend>? onFriendTap,
+    ValueChanged<String>? onThoughtTap,
+  }) => wrap(
     InnerCircleInteractiveSurface(
       userPeerId: 'self',
       onSelfAvatarTap: () {},
-      items: items,
-      onFriendTap: (_) {},
+      items: members ?? items,
+      onFriendTap: onFriendTap ?? (_) {},
       onGroupTap: (_) {},
       thoughtsByPeerId: notes,
-      nowProvider: () => start,
+      onThoughtTap: onThoughtTap,
+      nowProvider: now ?? () => start,
     ),
   );
 
@@ -960,4 +970,215 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+
+  testWidgets('collapsed overflow reports only live hidden Thoughts', (
+    tester,
+  ) async {
+    final initialClock = tester.binding.clock.now();
+    DateTime now() =>
+        start.add(tester.binding.clock.now().difference(initialClock));
+    await tester.pumpWidget(
+      arcSurface(
+        {
+          'friend-13': note('live-arc', lifetime: const Duration(seconds: 1)),
+          'friend-14': note('expired-arc', lifetime: Duration.zero),
+        },
+        members: [...items, OrbitFriendItem(_friend(14))],
+        now: now,
+      ),
+    );
+
+    final badge = find.byType(OverflowBadge);
+    final expander = find.bySemanticsLabel(RegExp('2 more people'));
+    final marker = find.descendant(
+      of: badge,
+      matching: find.byIcon(Icons.more_horiz),
+    );
+    expect(find.text('+2'), findsOneWidget);
+    expect(tester.getSemantics(expander).getSemanticsData().value, '1 thought');
+    expect(marker, findsOneWidget);
+    expect(find.byKey(const ValueKey('orbit-node-13')), findsNothing);
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(tester.getSemantics(expander).getSemanticsData().value, isEmpty);
+    expect(marker, findsNothing);
+    expect(find.text('+2'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'expanded overflow offers a separate Thought action until expiry',
+    (tester) async {
+      final initialClock = tester.binding.clock.now();
+      DateTime now() =>
+          start.add(tester.binding.clock.now().difference(initialClock));
+      final openedThoughts = <String>[];
+      final openedChats = <String>[];
+      await tester.pumpWidget(
+        arcSurface(
+          {
+            'friend-0': note('ring-thought', text: 'Ring note'),
+            'friend-13': note(
+              'arc-thought',
+              text: 'Arc note',
+              lifetime: const Duration(seconds: 1),
+            ),
+          },
+          now: now,
+          onFriendTap: (friend) => openedChats.add(friend.peerId),
+          onThoughtTap: openedThoughts.add,
+        ),
+      );
+
+      final overflow = find.byType(OverflowBadge);
+      final arcFace = find.byKey(const ValueKey('orbit-node-13'));
+      final arcThought = find.bySemanticsLabel(
+        'New thought from Friend 13: Arc note',
+      );
+      expect(find.text('Ring note'), findsOneWidget);
+      expect(arcThought, findsNothing);
+      await tester.tap(overflow);
+      await tester.pump();
+      expect(find.text('Ring note'), findsNothing);
+      expect(arcFace, findsNothing);
+      await tester.tap(overflow);
+      await tester.pump();
+      expect(arcFace, findsOneWidget);
+      expect(find.text('Arc note'), findsNothing);
+      expect(arcThought, findsOneWidget);
+      expect(
+        tester
+            .getSemantics(arcThought)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+      await tester.tap(arcThought);
+      expect(openedThoughts, ['arc-thought']);
+      expect(openedChats, isEmpty);
+      await tester.tap(arcFace);
+      expect(openedChats, ['friend-13']);
+      expect(openedThoughts, ['arc-thought']);
+
+      await tester.pump(const Duration(seconds: 1));
+      expect(arcThought, findsNothing);
+      expect(arcFace, findsOneWidget);
+      await tester.tap(overflow);
+      await tester.pump();
+      expect(arcFace, findsNothing);
+      expect(find.text('Ring note'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  const denseGeometry = OrbitGeometryPrefs(
+    avatarScale: 0.6,
+    spacingScale: 0.7,
+    arcWrap: 1.2,
+    maxPerArc: 9,
+    orbitGap: 0.5,
+  );
+
+  Future<void> expandSavedArcs(
+    WidgetTester tester, {
+    required OrbitGeometryPrefs geometry,
+    required int memberCount,
+    required int author,
+    required List<String> openedThoughts,
+    required List<String> openedChats,
+  }) async {
+    final store = FakeSecureKeyStore();
+    await store
+        .write(OrbitGeometryPrefs.storageKey, geometry.toStorageString())
+        .timeout(const Duration(seconds: 2));
+    await tester.pumpWidget(
+      wrap(
+        InnerCircleInteractiveSurface(
+          userPeerId: 'self',
+          items: [
+            for (var i = 0; i < memberCount; i++) OrbitFriendItem(_friend(i)),
+          ],
+          secureKeyStore: store,
+          nowProvider: () => start,
+          thoughtsByPeerId: {
+            'friend-$author': note('dense-arc', text: 'Arc note'),
+          },
+          onFriendTap: (friend) => openedChats.add(friend.peerId),
+          onGroupTap: (_) {},
+          onThoughtTap: openedThoughts.add,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(
+      tester
+          .widget<OrbitalVisualization>(find.byType(OrbitalVisualization))
+          .geometry,
+      geometry,
+    );
+    await tester.tap(find.byType(OverflowBadge));
+    await tester.pump();
+  }
+
+  testWidgets(
+    'dense saved arcs keep Thought and neighboring chat taps distinct',
+    (tester) async {
+      final openedThoughts = <String>[];
+      final openedChats = <String>[];
+      await expandSavedArcs(
+        tester,
+        geometry: denseGeometry,
+        memberCount: 22,
+        author: 17,
+        openedThoughts: openedThoughts,
+        openedChats: openedChats,
+      );
+      final thought = find.bySemanticsLabel(
+        'New thought from Friend 17: Arc note',
+      );
+      final ownFace = find.byKey(const ValueKey('orbit-node-17'));
+      final nextFace = find.byKey(const ValueKey('orbit-node-18'));
+      await tester.tapAt(tester.getCenter(thought));
+      expect(
+        openedChats,
+        isEmpty,
+        reason: 'the visible Thought opens its card',
+      );
+      expect(openedThoughts, ['dense-arc']);
+      await tester.tapAt(tester.getCenter(ownFace));
+      await tester.tapAt(tester.getCenter(nextFace));
+      expect(openedChats, ['friend-17', 'friend-18']);
+      expect(openedThoughts, ['dense-arc']);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('dense arc Thought tap leaves the overflow control usable', (
+    tester,
+  ) async {
+    final openedThoughts = <String>[];
+    final openedChats = <String>[];
+    await expandSavedArcs(
+      tester,
+      geometry: denseGeometry.copyWith(arcWrap: 0.5, maxPerArc: 4),
+      memberCount: 17,
+      author: 13,
+      openedThoughts: openedThoughts,
+      openedChats: openedChats,
+    );
+    final thought = find.bySemanticsLabel(
+      'New thought from Friend 13: Arc note',
+    );
+    final face = find.byKey(const ValueKey('orbit-node-13'));
+    await tester.tapAt(tester.getCenter(thought));
+    await tester.pump();
+    expect(openedThoughts, ['dense-arc']);
+    expect(openedChats, isEmpty);
+    expect(face, findsOneWidget);
+    await tester.tap(find.byType(OverflowBadge));
+    await tester.pump();
+    expect(face, findsNothing);
+    expect(openedThoughts, ['dense-arc']);
+    await tester.pumpWidget(const SizedBox());
+  });
 }

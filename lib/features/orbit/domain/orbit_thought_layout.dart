@@ -64,7 +64,7 @@ Map<int, OrbitThoughtPlacement> layoutOrbitThoughts({
     result[entry.key] =
         placement ??
         (
-          rect: _badgeRect(canvas, avatar, mirrored),
+          rect: orbitThoughtBadgeRect(canvas, avatar, mirrored),
           side: null,
           compact: false,
         );
@@ -72,7 +72,7 @@ Map<int, OrbitThoughtPlacement> layoutOrbitThoughts({
   return result;
 }
 
-Rect _badgeRect(Rect canvas, Rect avatar, bool mirrored) {
+Rect orbitThoughtBadgeRect(Rect canvas, Rect avatar, bool mirrored) {
   final left = mirrored
       ? avatar.left + 4
       : avatar.right - orbitThoughtBadgeSize - 4;
