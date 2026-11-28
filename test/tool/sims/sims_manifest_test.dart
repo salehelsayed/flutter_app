@@ -684,6 +684,26 @@ void main() {
     }
   });
 
+  test('killed-callee row selects just its V2-on provider build', () {
+    const scenarioId = 'android.production_call_killed_callee_rings';
+    const profileId = 'android.e2e.production_call_killed_callee';
+    final group = SimsPlanner(
+      manifest,
+    ).compile(mode: SimsMode.major, onlyId: scenarioId);
+    expect(group.selectedIds, {scenarioId, 'build.$profileId'});
+    final profile = manifest.buildProfileById(profileId)!;
+    expect(profile.artifactKind, 'provider-configured-debug-apk');
+    expect(
+      profile.compileDefines,
+      containsPair('VIDEO_CALL_V2_ENABLED', 'true'),
+    );
+    expect(profile.compileDefines, containsPair('PRODUCTION_FCM', 'true'));
+    expect(
+      productionAudioCallCohortExclusions({}, 'major'),
+      contains(scenarioId),
+    );
+  });
+
   test(
     'SE41 cases reuse one existing build and exact single-simulator scope',
     () {

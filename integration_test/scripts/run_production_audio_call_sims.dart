@@ -43,6 +43,7 @@ Future<void> main(List<String> arguments) async {
       mode: options.mode,
       environment: Platform.environment,
       dependencies: AndroidProductionAudioCallSimsAdapterDependencies.system(),
+      scenario: options.scenario,
       includeRegressions: options.includeRegressions,
       continueOnFailure: options.continueOnFailure,
       excludedCohortIds: options.excludedCohortIds,
@@ -52,7 +53,8 @@ Future<void> main(List<String> arguments) async {
     stderr.writeln(
       'Usage: dart run '
       'integration_test/scripts/run_production_audio_call_sims.dart '
-      '--mode major --scenario $androidProductionAudioCallScenarioId',
+      '--mode major --scenario '
+      '$androidProductionAudioCallScenarioId|$androidProductionKilledCalleeScenarioId',
     );
     exitCode = 64;
   } on Object catch (error, stackTrace) {
@@ -214,6 +216,7 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
   required String mode,
   required Map<String, String> environment,
   required AndroidProductionAudioCallSimsAdapterDependencies dependencies,
+  String scenario = androidProductionAudioCallScenarioId,
   bool includeRegressions = false,
   bool continueOnFailure = false,
   List<String> excludedCohortIds = const <String>[],
@@ -221,6 +224,34 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
   if (mode != 'major' && mode != 'full') {
     throw const FormatException('Production audio-call mode is invalid.');
   }
+  final killedCallee = scenario == androidProductionKilledCalleeScenarioId;
+  if (!killedCallee && scenario != androidProductionAudioCallScenarioId) {
+    throw const FormatException('Production audio-call scenario is invalid.');
+  }
+  if (killedCallee &&
+      (includeRegressions || usesDisposableAndroidPair(environment))) {
+    throw const FormatException(
+      'Killed callee requires its own physical caller and emulator callee row.',
+    );
+  }
+  final providerPath =
+      environment['SIMS_PROVIDER_FCM_CREDENTIAL_PATH']?.trim() ?? '';
+  final fcmPath = providerPath.isNotEmpty
+      ? providerPath
+      : environment['FIREBASE_SERVICE_ACCOUNT']?.trim() ?? '';
+  if (killedCallee && fcmPath.isEmpty) {
+    throw const FormatException(
+      'Killed callee requires the configured test FCM service account.',
+    );
+  }
+  final packageName = killedCallee
+      ? androidProductionKilledCalleeAppPackage
+      : androidProductionAudioCallAppPackage;
+  final providerEnvironment = <String, String>{
+    'PLAN399_CALL_FCM_ENABLED': killedCallee ? '1' : '0',
+    if (killedCallee)
+      'SIMS_PROVIDER_FCM_CREDENTIAL_PATH': File(fcmPath).absolute.path,
+  };
   if (excludedCohortIds.isNotEmpty) {
     if (!includeRegressions) {
       throw const FormatException('--exclude needs --include-regressions.');
@@ -239,7 +270,7 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
           ...productionAudioCallCohortExclusions(environment, mode),
           ...excludedCohortIds,
         ].expand((id) => ['--exclude', id]).toList()
-      : ['--only', androidProductionAudioCallScenarioId];
+      : ['--only', scenario];
   // One lease covers build preparation and every selected row. Reuse the
   // single-row 45m allowance for each row, with the existing four-hour ceiling.
   final selectedRowCount = includeRegressions
@@ -254,7 +285,9 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
   final goEnvironment =
       <String, String>{
           ...environment,
+          ...providerEnvironment,
           'GOTOOLCHAIN': androidProductionAudioCallGoToolchain,
+          if (killedCallee) 'GOMAXPROCS': '4',
           if (environment['PLAN399_FIXTURE_GO_TIMEOUT']?.trim().isNotEmpty !=
               true)
             'PLAN399_FIXTURE_GO_TIMEOUT': '${fixtureMinutes}m',
@@ -293,11 +326,13 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
     }
     final centralEnvironment = <String, String>{
       ...environment,
+      ...providerEnvironment,
       // Bind both APK preparation and app controls to the isolated campaign.
-      'ANDROID_APP_PACKAGE': androidProductionAudioCallAppPackage,
-      'SIMS_APP_ID': androidProductionAudioCallAppPackage,
-      'ORG_GRADLE_PROJECT_androidApplicationId':
-          androidProductionAudioCallAppPackage,
+      'ANDROID_APP_PACKAGE': packageName,
+      'SIMS_APP_ID': packageName,
+      'ORG_GRADLE_PROJECT_androidApplicationId': packageName,
+      if (killedCallee)
+        'ORG_GRADLE_PROJECT_disableGoogleServicesForDisposableProof': 'false',
       'GOTOOLCHAIN': androidProductionAudioCallGoToolchain,
       'RELIABILITY_MULTI_DEVICE_IDS': devices.join(','),
       androidCampaignFirstTargetEnvironment(environment): devices.first,
@@ -333,7 +368,9 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
       ],
       environment: centralEnvironment,
     );
-    final hold = productionAudioCallManualHold(environment);
+    final hold = killedCallee
+        ? null
+        : productionAudioCallManualHold(environment);
     final manualOnly =
         hold != null && environment['PLAN399_MANUAL_ONLY'] == '1';
     result = prepare != 0
@@ -468,6 +505,7 @@ List<String> _explicitAndroidPair(Map<String, String> environment) {
 final class _ProductionAudioCallAdapterOptions {
   const _ProductionAudioCallAdapterOptions({
     required this.mode,
+    required this.scenario,
     required this.includeRegressions,
     required this.continueOnFailure,
     required this.excludedCohortIds,
@@ -502,13 +540,13 @@ final class _ProductionAudioCallAdapterOptions {
     if (mode != 'major' && mode != 'full') {
       throw const FormatException('--mode must be major or full.');
     }
-    if (scenario != androidProductionAudioCallScenarioId) {
-      throw FormatException(
-        '--scenario must be $androidProductionAudioCallScenarioId.',
-      );
+    if (scenario != androidProductionAudioCallScenarioId &&
+        scenario != androidProductionKilledCalleeScenarioId) {
+      throw const FormatException('--scenario must select a call campaign.');
     }
     return _ProductionAudioCallAdapterOptions(
       mode: mode!,
+      scenario: scenario!,
       includeRegressions: includeRegressions,
       continueOnFailure: continueOnFailure,
       excludedCohortIds: excludedCohortIds,
@@ -516,6 +554,7 @@ final class _ProductionAudioCallAdapterOptions {
   }
 
   final String mode;
+  final String scenario;
   final bool includeRegressions;
   final bool continueOnFailure;
   final List<String> excludedCohortIds;

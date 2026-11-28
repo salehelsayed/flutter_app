@@ -288,6 +288,14 @@ const List<_Scenario> _scenarios = <_Scenario>[
         'an explicitly local relay/TURN fixture',
   ),
   _Scenario(
+    androidProductionKilledCalleeScenarioId,
+    'VC-059',
+    'production Android killed-callee ringing',
+    'automated-physical-android-plus-emulator',
+    'a caller replaces a canceled invite and an owned killed ringing callee '
+        'rings again through the local real-FCM fixture',
+  ),
+  _Scenario(
     _directMediaBlobCustodyScenarioId,
     'Plan 347',
     'TC-347-09',
@@ -416,6 +424,10 @@ Future<void> runOneToOneDeviceReal(
           ?.trim(),
     _productionAudioCallScenarioId =>
       Platform.environment['SIMS_ARTIFACT_ANDROID_E2E_PRODUCTION_CALL_LOCAL']
+          ?.trim(),
+    androidProductionKilledCalleeScenarioId =>
+      Platform
+          .environment['SIMS_ARTIFACT_ANDROID_E2E_PRODUCTION_CALL_KILLED_CALLEE']
           ?.trim(),
     _ => Platform.environment['SIMS_ARTIFACT_ANDROID_E2E_STANDARD']?.trim(),
   };
@@ -566,7 +578,9 @@ Future<void> runOneToOneDeviceReal(
     return;
   }
 
-  if (toRun.length == 1 && toRun.single.id == _productionAudioCallScenarioId) {
+  if (toRun.length == 1 &&
+      (toRun.single.id == _productionAudioCallScenarioId ||
+          toRun.single.id == androidProductionKilledCalleeScenarioId)) {
     final pairDevices = cliDevices.isNotEmpty
         ? cliDevices
         : <String>[
@@ -586,10 +600,15 @@ Future<void> runOneToOneDeviceReal(
                 .isNotEmpty)
               Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID']!.trim(),
           ];
-    final result = await runAndroidProductionAudioCallCampaign(
-      devices: pairDevices,
-      artifactPath: artifact,
-    );
+    final result = toRun.single.id == androidProductionKilledCalleeScenarioId
+        ? await runAndroidProductionKilledCalleeCampaign(
+            devices: pairDevices,
+            artifactPath: artifact,
+          )
+        : await runAndroidProductionAudioCallCampaign(
+            devices: pairDevices,
+            artifactPath: artifact,
+          );
     stdout.writeln('SIMS_RESULT_JSON=${jsonEncode(result.json)}');
     exitCode = result.processExitCode;
     return;

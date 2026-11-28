@@ -84,6 +84,34 @@ Future<void> main() async {
     );
   });
 
+  test('only the killed-callee fixture requires the real FCM attestation', () {
+    final root = '${Directory.systemTemp.absolute.path}/plan399-fixture';
+    final provider = _readiness(root)..['realFcmConfigured'] = true;
+    expect(
+      validateProductionAudioCallLocalFixtureReadiness(
+        provider,
+        expectedHost: '192.168.0.60',
+        requireRealFcm: true,
+      ).relayPort,
+      40123,
+    );
+    expect(
+      () => validateProductionAudioCallLocalFixtureReadiness(
+        provider,
+        expectedHost: '192.168.0.60',
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => validateProductionAudioCallLocalFixtureReadiness(
+        _readiness(root)..['realFcmConfigured'] = false,
+        expectedHost: '192.168.0.60',
+        requireRealFcm: true,
+      ),
+      throwsFormatException,
+    );
+  });
+
   test('oracle DTO accepts only complete bidirectional relay proof', () {
     final result = validateProductionAudioCallOracleResult(
       _oracleResult(),

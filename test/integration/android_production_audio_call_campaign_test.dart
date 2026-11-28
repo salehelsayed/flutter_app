@@ -2159,6 +2159,7 @@ Calls:
         mode: 'major',
         environment: const <String, String>{
           'GOTOOLCHAIN': 'auto',
+          'PLAN399_CALL_FCM_ENABLED': '1',
           'ANDROID_APP_PACKAGE': 'com.mknoon.app',
           'SIMS_APP_ID': 'com.mknoon.app',
           'ORG_GRADLE_PROJECT_androidApplicationId': 'com.mknoon.app',
@@ -2187,6 +2188,12 @@ Calls:
         ...centralEnvironments,
       ];
       expect(
+        everyChild.map(
+          (environment) => environment['PLAN399_CALL_FCM_ENABLED'],
+        ),
+        everyElement('0'),
+      );
+      expect(
         everyChild.map((environment) => environment['GOTOOLCHAIN']),
         everyElement(androidProductionAudioCallGoToolchain),
       );
@@ -2207,6 +2214,38 @@ Calls:
         decodeAndroidProductionAudioCallPionOracleAttestation(encodedOracle!),
         isA<AndroidProductionAudioCallPionOracleEvidence>(),
       );
+
+      centralEnvironments.clear();
+      const providerPath = '/synthetic-vc059-provider.json';
+      expect(
+        await runAndroidProductionAudioCallSimsAdapter(
+          mode: 'major',
+          scenario: androidProductionKilledCalleeScenarioId,
+          environment: const <String, String>{
+            'RELIABILITY_MULTI_DEVICE_IDS': 'pixel,emulator-5554',
+            'FIREBASE_SERVICE_ACCOUNT': providerPath,
+            'ORG_GRADLE_PROJECT_disableGoogleServicesForDisposableProof':
+                'true',
+          },
+          dependencies: dependencies,
+        ).timeout(const Duration(seconds: 3)),
+        0,
+      );
+      expect(fixtureEnvironment!['PLAN399_CALL_FCM_ENABLED'], '1');
+      expect(
+        fixtureEnvironment!['SIMS_PROVIDER_FCM_CREDENTIAL_PATH'],
+        providerPath,
+      );
+      expect(centralEnvironments, hasLength(2));
+      for (final child in centralEnvironments) {
+        expect(child['PLAN399_CALL_FCM_ENABLED'], '1');
+        expect(child['SIMS_APP_ID'], androidProductionKilledCalleeAppPackage);
+        expect(
+          child['ORG_GRADLE_PROJECT_disableGoogleServicesForDisposableProof'],
+          'false',
+        );
+      }
+      expect(fixtureStops, 2);
     },
   );
 

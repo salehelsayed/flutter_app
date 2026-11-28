@@ -85,6 +85,8 @@ const _productionAudioCallSupport = <String, String>{
       '399 manifest-owned production-main Android call campaign, local fixture control, read-only observer, or privacy-bounded RTP evidence',
   'integration_test/scripts/production_audio_call_local_fixture.dart':
       '399 manifest-owned production-main Android call campaign, local fixture control, read-only observer, or privacy-bounded RTP evidence',
+  'integration_test/scripts/production_killed_callee_campaign.dart':
+      '399 manifest-owned production-main Android call campaign, local fixture control, read-only observer, or privacy-bounded RTP evidence',
   'integration_test/support/android_production_audio_call_evidence.dart':
       '399 manifest-owned production-main Android call campaign, local fixture control, read-only observer, or privacy-bounded RTP evidence',
   'lib/core/debug/android_production_audio_call_e2e.dart':

@@ -106,6 +106,7 @@ readonly ONE_TO_ONE_TESTS=(
   # directional RTP booleans, and privacy-bounded evidence contract.
   "test/core/debug/android_production_audio_call_e2e_test.dart"
   "test/integration/android_production_audio_call_campaign_test.dart"
+  "test/integration/android_production_killed_callee_campaign_test.dart"
   "test/integration/android_production_audio_call_evidence_test.dart"
   "test/integration/production_call_in_app_identity_test.dart"
   "test/integration/production_audio_call_local_fixture_test.dart"
