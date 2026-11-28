@@ -81,6 +81,17 @@ func b29StoreAdmit(t *testing.T, store *activeIdentityStore, day, account string
 
 func b29StoreAdvance(t *testing.T, store *activeIdentityStore, clock *b29StoreClock, at time.Time) {
 	t.Helper()
+	// Ordinary same-day and adjacent-day fixtures represent a running relay.
+	// Fixtures testing an observation gap set the clock and call advance directly.
+	start := clock.now()
+	if activitycalendar.Day(at) <= activitycalendar.Day(start.AddDate(0, 0, 1)) {
+		for tick := start.Add(activeIdentityObservationPeriod); tick.Before(at); tick = tick.Add(activeIdentityObservationPeriod) {
+			clock.set(tick)
+			if err := store.advance(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	clock.set(at)
 	if err := store.advance(); err != nil {
 		t.Fatal(err)

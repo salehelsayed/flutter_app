@@ -24,6 +24,9 @@ const (
 	activeIdentityStoreCalendar      = "Europe/Berlin"
 	activeIdentityStoreSnapshotLimit = 2 << 20
 	activeIdentityObservationPeriod  = time.Minute
+	// The live ticker may be delayed by a tick. Restart recovery still requires
+	// a durable observation within one period.
+	activeIdentityLiveGapLimit = 2 * activeIdentityObservationPeriod
 )
 
 var (
@@ -288,11 +291,22 @@ func (s *activeIdentityStore) rolloverNeedsFlushLocked(at time.Time) bool {
 }
 
 func (s *activeIdentityStore) advanceLocked(at time.Time) error {
+	// Berlin coverage follows wall time, including clock steps and intervals
+	// where the process's monotonic clock may stop during system sleep.
+	at = at.Round(0)
 	today := activitycalendar.Day(at)
 	if at.IsZero() || today < s.openDay.Day || at.Before(s.openDay.ObservingFrom) {
 		return errActiveIdentityStoreDay
 	}
+	gap := at.Sub(s.observedAt)
+	continuous := !s.observedAt.IsZero() && gap >= 0 && gap <= activeIdentityLiveGapLimit
 	if today == s.openDay.Day {
+		if !continuous && s.openDay.FullDayEligible {
+			if err := s.nextGenerationLocked(); err != nil {
+				return err
+			}
+			s.openDay.FullDayEligible = false
+		}
 		s.observedAt = at
 		return nil
 	}
@@ -301,7 +315,7 @@ func (s *activeIdentityStore) advanceLocked(at time.Time) error {
 		return errActiveIdentityStoreDay
 	}
 	previous, _ := activitycalendar.Parse(s.openDay.Day)
-	continuous := previous.AddDate(0, 0, 1).Equal(midnight)
+	continuous = continuous && previous.AddDate(0, 0, 1).Equal(midnight)
 	frozen, err := s.missingFinalsLocked(midnight, continuous)
 	if err != nil {
 		return err

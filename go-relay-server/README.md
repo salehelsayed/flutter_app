@@ -38,6 +38,8 @@
 
   Adjust the FIREBASE_SERVICE_ACCOUNT path to wherever your service account JSON lives on the EC2 instance.
 
+Before first starting a relay with BL-29 coverage metadata, stop the old process and copy the existing `MKNOON_RELAY_ACTIVE_IDENTITIES_SNAPSHOT_PATH` file aside with its owner and permissions preserved. Restore that old-format snapshot before restarting the old binary on rollback.
+
 ## Direct APNs VoIP calling
 
 The direct PushKit provider is separate from Firebase and is default-off. It

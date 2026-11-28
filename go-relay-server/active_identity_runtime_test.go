@@ -248,6 +248,54 @@ func TestB29RuntimeCollectorFailedWriteWithholdsAllRows(t *testing.T) {
 	b29RuntimeContains(t, body, "relay_active_identities_storage_ready 1", "relay_engagement_storage_ready 1", "relay_engagement_weekly_estimated{kind=\"call\",week=\"2026-W43\"} 1", "relay_active_identities_estimated{day=\"2026-10-24\",window=\"1d\"} 1")
 }
 
+func TestB29RuntimeCollectorMarksInProcessObservationGapsPartial(t *testing.T) {
+	const day = "2026-03-29"
+	start := b29StoreMidnight(t, day)
+	midnight := b29StoreMidnight(t, "2026-03-30")
+	for _, tc := range []struct {
+		name       string
+		lastTick   time.Time
+		resume     time.Time
+		oldPartial int
+		newPartial int
+	}{
+		{"within-day", start.Add(time.Hour), start.Add(4 * time.Hour), 1, 0},
+		{"clock-reversal", start.Add(4 * time.Hour), start.Add(time.Hour), 1, 0},
+		{"across-midnight", midnight.Add(-time.Hour), midnight.Add(2 * time.Hour), 1, 1},
+		{"healthy-ticker-jitter", midnight.Add(-50 * time.Second), midnight.Add(20 * time.Second), 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := &b29StoreClock{at: start}
+			store := b29NewStore(t, clock)
+			inbox := NewInboxStore(nil)
+			inbox.activeIdentities = store
+			b29StoreAdmit(t, store, day, "public-before-suspend")
+			b29StoreAdvance(t, store, clock, tc.lastTick)
+
+			clock.set(tc.resume)
+			if err := store.advance(); err != nil {
+				t.Fatal(err)
+			}
+			if tc.resume.Before(midnight) {
+				if disk := b29StoreDisk(t, store.path); disk.OpenDay.FullDayEligible {
+					t.Error("detected coverage loss was not persisted")
+				}
+				b29StoreAdvance(t, store, clock, midnight)
+			}
+			b29StoreAdmit(t, store, "2026-03-30", "public-after-suspend")
+			b29StoreAdvance(t, store, clock, b29StoreMidnight(t, "2026-03-31"))
+
+			body := b29RuntimeScrape(t, inbox)
+			b29RuntimeContains(t, body,
+				"relay_active_identities_estimated{day=\"2026-03-29\",window=\"1d\"} 1",
+				"relay_active_identities_estimated{day=\"2026-03-30\",window=\"1d\"} 1",
+				fmt.Sprintf("relay_active_identities_coverage_partial{day=\"2026-03-29\"} %d", tc.oldPartial),
+				fmt.Sprintf("relay_active_identities_coverage_partial{day=\"2026-03-30\"} %d", tc.newPartial),
+			)
+		})
+	}
+}
+
 func TestB29RuntimeCollectorRetainsEightISOWeeks(t *testing.T) {
 	clock := &b29StoreClock{at: b29StoreMidnight(t, "2026-12-28")}
 	store := b29EngagementStore(t, clock)
