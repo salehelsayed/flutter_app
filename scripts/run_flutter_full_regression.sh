@@ -429,7 +429,7 @@ integration_tests=(
 
 run_case 'flutter version' flutter --version
 run_case 'dart version' dart --version
-run_case 'flutter pub get' flutter pub get
+run_case 'flutter pub get' flutter pub get --offline --enforce-lockfile
 run_case 'flutter analyze baseline gate' ./scripts/check_flutter_analyze_baseline.sh
 run_case 'gate completeness-check' ./scripts/run_test_gates.sh completeness-check
 run_case 'gate all' env FLUTTER_DEVICE_ID="$android_device" ./scripts/run_test_gates.sh all

@@ -34,7 +34,9 @@
         [
           "flutter",
           "pub",
-          "get"
+          "get",
+          "--offline",
+          "--enforce-lockfile"
         ]
       ],
       "environment": {},
