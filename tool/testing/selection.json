@@ -761,6 +761,9 @@
     },
     "diagnostics-python": {
       "kind": "python",
+      "resources": [
+        "isolated:python"
+      ],
       "paths": [
         "docker-ws/app_diagnostics_test.py",
         "docker-ws/app_diagnostics_monitor_test.py",
@@ -1164,6 +1167,9 @@
     },
     "go-core": {
       "kind": "go",
+      "resources": [
+        "isolated:go"
+      ],
       "packages": [
         "./..."
       ],
@@ -1184,6 +1190,9 @@
     },
     "go-relay": {
       "kind": "go",
+      "resources": [
+        "isolated:go"
+      ],
       "packages": [
         "./..."
       ],
