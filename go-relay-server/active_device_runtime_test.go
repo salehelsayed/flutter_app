@@ -317,3 +317,40 @@ func TestActiveDevicesInvalidSnapshotDoesNotDisableCanonicalStore(t *testing.T) 
 		t.Fatal("invalid device snapshot affected the canonical counter")
 	}
 }
+
+func TestActiveDevicesLateThoughtDeliveryDoesNotMarkAnotherBerlinDay(t *testing.T) {
+	inbox, clock := activeDeviceTestInbox(t)
+	midnight := b29StoreMidnight(t, activeDeviceTestTomorrow)
+	b29StoreAdvance(t, inbox.activeDevices.activeIdentityStore, clock, midnight.Add(-time.Second))
+	_, actor := b293Account(t, 32)
+	_, firstRecipient := b293Account(t, 33)
+	_, laterRecipient := b293Account(t, 34)
+	thought := fmt.Sprintf(`{"type":"post_create","post_id":"cross-midnight","event_id":"same-event","sender_peer_id":%q,"created_at":%q}`, actor, clock.now().UTC().Format(time.RFC3339))
+	store := func(recipient string) {
+		t.Helper()
+		response := activeDeviceTestRequest(t, inbox, nil, actor, map[string]any{
+			"action": "store", "to": recipient, "message": thought,
+		})
+		if response["storeStatus"] != string(InboxStoreResultStored) {
+			t.Fatalf("Thought delivery for a new recipient was not stored: %v", response)
+		}
+	}
+	store(firstRecipient)
+	activeDeviceTestExpectCount(t, inbox, clock, 1)
+	b29RuntimeContains(t, b29RuntimeScrape(t, inbox), fmt.Sprintf(
+		`relay_active_devices_coverage_partial{day=%q} 0`, activeDeviceTestDay))
+
+	clock.set(midnight.Add(time.Second))
+	store(laterRecipient)
+	b29StoreAdvance(t, inbox.activeDevices.activeIdentityStore, clock, midnight.AddDate(0, 0, 1))
+	body := b29RuntimeScrape(t, inbox)
+	for _, window := range []string{"1d", "7d", "30d"} {
+		b29RuntimeContains(t, body, fmt.Sprintf(
+			`relay_active_devices_estimated{day=%q,window=%q} 1`, activeDeviceTestDay, window))
+	}
+	b29RuntimeContains(t, body,
+		fmt.Sprintf(`relay_active_devices_coverage_partial{day=%q} 0`, activeDeviceTestDay),
+		fmt.Sprintf(`relay_active_devices_estimated{day=%q,window="1d"} 0`, activeDeviceTestTomorrow),
+		fmt.Sprintf(`relay_active_devices_estimated{day=%q,window="7d"} 1`, activeDeviceTestTomorrow),
+		fmt.Sprintf(`relay_active_devices_estimated{day=%q,window="30d"} 1`, activeDeviceTestTomorrow))
+}

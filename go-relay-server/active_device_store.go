@@ -64,16 +64,24 @@ func (s *activeDeviceStore) endRequest() {
 }
 
 func (s *activeDeviceStore) observe(device string) {
+	s.observeAdmission(device, nil)
+}
+
+func (s *activeDeviceStore) observeAdmission(device string, authoredAt *time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopped || device == "" {
 		return
 	}
 	at := s.now()
+	day := activitycalendar.Day(at)
+	if authoredAt != nil && activitycalendar.Day(*authoredAt) != day {
+		return
+	}
 	if s.advanceLocked(at) != nil || s.nextGenerationLocked() != nil {
 		return
 	}
-	_ = s.sketches.insert(activitycalendar.Day(at), device)
+	_ = s.sketches.insert(day, device)
 }
 
 func (s *activeDeviceStore) advance() error {
@@ -104,22 +112,25 @@ func (s *activeDeviceStore) finish(hostClosed bool) error {
 	return s.saveThrough(target, checkpoint)
 }
 
-func eligibleActiveDeviceInboxAdmission(recipient string, entry inboxMessage) bool {
+func activeDeviceInboxAdmission(recipient string, entry inboxMessage) (authoredAt *time.Time, eligible bool) {
 	if entry.QuietRecovery || directNotificationCustodyOnly(recipient, entry) {
-		return false
+		return nil, false
 	}
 	envelope, ok := decodeJSONObjectPreservingNumbers(entry.Message)
 	if !ok {
-		return false
+		return nil, false
 	}
 	switch exactString(envelope["type"]) {
 	case "post_create":
-		_, ok := eligibleThoughtMetricEnvelope(entry)
-		return ok
+		thought, ok := eligibleThoughtMetricEnvelope(entry)
+		if !ok {
+			return nil, false
+		}
+		return &thought.created, true
 	case "chat_message":
 		_, ok := extractAckCustodyDedupeKeyForRecipient(ackCustodyDirectTextKind, entry.Message, entry.From, recipient)
-		return ok
+		return nil, ok
 	default:
-		return false
+		return nil, false
 	}
 }

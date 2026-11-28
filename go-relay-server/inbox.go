@@ -3125,8 +3125,10 @@ func (is *InboxStore) recordStoredAndLaunchPush(toPeerId string, entry inboxMess
 }
 
 func (is *InboxStore) recordStoredWithoutPush(toPeerId string, entry inboxMessage) {
-	if is.activeDevices != nil && eligibleActiveDeviceInboxAdmission(toPeerId, entry) {
-		is.activeDevices.observe(entry.From)
+	if is.activeDevices != nil {
+		if authoredAt, eligible := activeDeviceInboxAdmission(toPeerId, entry); eligible {
+			is.activeDevices.observeAdmission(entry.From, authoredAt)
+		}
 	}
 	inboxStoredCounter.Inc()
 	if biz != nil {
