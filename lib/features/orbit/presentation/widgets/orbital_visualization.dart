@@ -432,7 +432,7 @@ class OrbitalVisualization extends StatelessWidget {
           otherObstacles: [
             if (selfPeerId != null && onComposeThought != null)
               const Rect.fromLTWH(4, 4, 44, 44),
-            if (overflowTarget != null) overflowTarget,
+            ?overflowTarget,
           ],
         ),
       );
