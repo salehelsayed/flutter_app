@@ -486,6 +486,25 @@ class RepositoryMappingRegressionTest(unittest.TestCase):
                                         '-p', '4', *go_check['packages']])
                 self.assertEqual(packages, go_check['packages'])
 
+    def test_isolated_go_and_diagnostics_can_run_with_whole_file_flutter(self):
+        plan = self.select_path('android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallAdmissionDiagnostics.kt')
+        rows = {row['id']: row for row in plan['selected']}
+        isolated = ('go-core', 'go-relay', 'diagnostics-python')
+        files = checks.source_files(self.root)
+        for cid in (*isolated, 'call-signaling', 'android-call-native', 'small-group'):
+            row = rows[cid]
+            row['command'], row['selected_paths'] = checks.command_for(row, self.root, files)
+
+        flutter = rows['call-signaling']
+        native = rows['android-call-native']
+        self.assertFalse(checks.resources_compatible(native, flutter))
+        self.assertFalse(checks.resources_compatible(rows['go-core'], rows['go-relay']))
+        for cid in isolated:
+            with self.subTest(check=cid):
+                self.assertTrue(checks.resources_compatible(rows[cid], flutter))
+                self.assertFalse(checks.resources_compatible(rows[cid], native))
+                self.assertFalse(checks.resources_compatible(rows[cid], rows['small-group']))
+
     def test_feature_dart_edits_do_not_match_root_entrypoint_build_rule(self):
         # fnmatch '*' crosses '/' in Python; the former lib/*.dart rule
         # accidentally broadened every feature edit into a platform rebuild.
