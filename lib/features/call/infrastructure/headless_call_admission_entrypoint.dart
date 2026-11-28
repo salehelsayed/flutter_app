@@ -301,7 +301,7 @@ Future<void> runAndroidHeadlessCallAdmission(
             report.leaseReleased &&
             report.display != null)
           'display': report.display!.toMap(),
-        if (diagnosticCause != null) 'diagnosticCause': diagnosticCause,
+        'diagnosticCause': ?diagnosticCause,
       },
     );
   } finally {
