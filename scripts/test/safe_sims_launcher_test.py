@@ -105,7 +105,7 @@ print('private-child-marker')
                                     for r in row["resources"]))
                 for field in set(before) - {"resources", "targetCapabilities", "artifactValidator", "assertions"}:
                     self.assertEqual(row[field], before[field], (row["id"], field))
-        self.assertEqual(len(changed), 76)
+        self.assertEqual(len(changed), 77)
         self.assertEqual(rebound["buildProfiles"], self.manifest["buildProfiles"])
         self.assertEqual(launcher.disposable_manifest(rebound), rebound)
 

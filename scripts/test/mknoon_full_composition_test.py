@@ -67,7 +67,7 @@ class OwnershipCompositionTest(RepositoryFixture):
         adapters = [row for row in commands.values() if row.get('adapter')]
         self.assertEqual({row['capability'] for row in adapters}, {
             'android.direct_media_blob_custody', 'android.production_1to1_audio_call',
-            'notifications.android_recovery_completion'})
+            'android.production_call_killed_callee_rings', 'notifications.android_recovery_completion'})
         for row in adapters:
             expected_command = ['dart', 'run', row['adapter'], '--mode', 'major', '--scenario', row['capability']]
             if row['capability'] == 'android.production_1to1_audio_call':
