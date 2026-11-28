@@ -39,6 +39,8 @@ func (s *InboxStore) Describe(ch chan<- *prometheus.Desc) {
 	ch <- activeIdentityReadyDesc
 	ch <- activeIdentityEstimateDesc
 	ch <- activeIdentityCoverageDesc
+	ch <- activeDeviceEstimateDesc
+	ch <- activeDeviceCoverageDesc
 	ch <- activeEngagementReadyDesc
 	ch <- activeEngagementEstimateDesc
 	ch <- featureUseReadyDesc
@@ -46,6 +48,9 @@ func (s *InboxStore) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (s *InboxStore) Collect(ch chan<- prometheus.Metric) {
+	if s != nil && s.activeDevices != nil {
+		collectActiveDevices(ch, s.activeDevices)
+	}
 	var daily []activeIdentityFinalized
 	var weekly []activeEngagementWeek
 	var dailyReady, weeklyReady bool

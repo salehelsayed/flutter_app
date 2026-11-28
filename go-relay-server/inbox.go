@@ -2716,6 +2716,7 @@ type InboxStore struct {
 	stickerMetrics   *stickerMetrics
 	appDiagnostics   *appDiagnosticStore
 	activeIdentities *activeIdentityStore
+	activeDevices    *activeIdentityStore
 	featureUse       *featureUseStore
 	backend          InboxBackend
 	push             *PushService
