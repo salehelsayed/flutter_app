@@ -15029,6 +15029,22 @@ RED, strict restore/rank and forced-interleaving fixture corrections, and final
 reviewed receipts remain under the BL29 implementation evidence's `e1-store/`.
 This proves the host storage model, not weekly wire or phone witnesses.
 
+The later BL29 coverage unit supersedes daily omission for recoverable
+partial Berlin days. It emits a coverage flag with each retained closed-day
+triple. A long same-process observation gap marks affected days partial.
+Short restarts preserve full-day eligibility when a recent durable checkpoint
+supports it. An idle crash can conservatively yield partial coverage.
+
+On exact relay RED `09eed821e4e4404abad3b15b4b33a8616ad644ce`, Claude-Dev
+reproduced both restart omissions after signed admissions and snapshot reopen
+succeeded. The two cases failed at the missing 1d scrape assertion (exit 1,
+Kayan `m-b679112a`). On GREEN `83797850866b3d174750b6d28b8e7f5468b2252c`,
+both passed with the original count assertion. The focused race run passed
+155 named cases, including gap, clock reversal and legacy snapshot fixtures.
+The full `go-relay` row passed 2,337 named cases and `go vet` exited 0.
+The other 15 change selections were outside this unit's host execution
+(Kayan `m-27def7a5`, AX42 `/srv/evidence/ax42-cd-bl29-green2/`).
+
 The daily `active_identity_v1` proof binds the logical root account to the
 stream's authenticated transport peer, including a linked secondary. At
 `5e72cda357e97dafa60bc50942ebe1ad925a87a4`, all 21 original named RED failure
