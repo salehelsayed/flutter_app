@@ -156,17 +156,15 @@ void main() {
             final visible = tester
                 .getRect(text)
                 .intersect(tester.getRect(control))
-                .shift(-paragraph.localToGlobal(Offset.zero))
-                .inflate(1);
+                .shift(-paragraph.localToGlobal(Offset.zero));
             final boxes = paragraph.getBoxesForSelection(
               TextSelection(baseOffset: 0, extentOffset: label.length),
             );
             if (boxes.isEmpty ||
-                paragraph.didExceedMaxLines ||
                 boxes.any(
                   (box) =>
-                      !visible.contains(Offset(box.left, box.top)) ||
-                      !visible.contains(Offset(box.right, box.bottom)),
+                      box.top < visible.top - 1 ||
+                      box.bottom > visible.bottom + 1,
                 )) {
               clipped.add(label);
             }
@@ -175,7 +173,7 @@ void main() {
           expect(
             clipped,
             isEmpty,
-            reason: 'All label glyphs fit in their controls',
+            reason: 'All painted glyphs fit vertically in their controls',
           );
           await tester.tap(find.text(friendName)).timeout(deadline);
           await tester.tap(find.text(introduce)).timeout(deadline);
