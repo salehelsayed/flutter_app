@@ -362,6 +362,35 @@ class HostWorkerContractTest(RepositoryFixture):
 
 
 class LegacySelectionTest(RepositoryFixture):
+    def test_full_legacy_pub_get_enforces_the_lockfile(self):
+        import shlex
+        import subprocess
+
+        root = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            ['bash', 'scripts/run_flutter_full_regression.sh', '--dry-run',
+             '--output', str(self.root / 'logs')],
+            cwd=root, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        listed = [
+            shlex.split(line.removeprefix('  route:'))
+            for line in result.stdout.splitlines() if line.startswith('  route:')
+        ]
+        catalog = json.loads((root / 'tool/testing/legacy_target_contracts.json').read_text())
+        protected = [argv for route in catalog['full'].values() for argv in route['commands']]
+        for mode, commands in [('direct', listed), ('protected', protected)]:
+            with self.subTest(mode=mode):
+                pub_gets = [
+                    argv for argv in commands
+                    if any(argv[index:index + 3] == ['flutter', 'pub', 'get']
+                           for index in range(len(argv) - 2))
+                ]
+                self.assertTrue(pub_gets, 'Full regression must prepare dependencies.')
+                for argv in pub_gets:
+                    self.assertIn('--enforce-lockfile', argv)
+                    self.assertIn('--offline', argv)
+
     def test_legacy_excludes_only_explicit_duplicate_routes_and_keeps_default_95(self):
         import subprocess
         root = Path(__file__).resolve().parents[2]
