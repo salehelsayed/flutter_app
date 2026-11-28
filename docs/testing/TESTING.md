@@ -11668,6 +11668,16 @@ visible and cannot become an ordinary first-attempt PASS.
   explicit-base local selection includes unrelated dirty-tree checks left
   NOT RUN; see `.codex-test-logs/r29-w3-startup-20260929/` and the R2-9
   handoff for first-attempt and follow-up artifacts.
+  BL-111/112 distinguishes notification denial from a stale call owner. In the
+  matched Android process-death check, the old call must reach Telecom RINGING,
+  then disconnect when its callee process dies. Verify the successor's own
+  native ringing and caller `remoteRinging` after the cold callee starts.
+  On combined source `b24001f9c`, tester release APK 400 (SHA-256 beginning
+  `95c69172`), a Pixel 8 API 37 emulator and iPhone 13 dev 399 on Hetzner
+  passed this sequence with Android notification permission still denied and
+  V2 enabled. Flutter receipt `m-b351a218` also retains the slow first cold
+  control and a late Decline timeout before the successful repeat. The
+  device evidence covers this pair and scenario. Latency stays observational.
   The R2-9 headless `ringing` reply exposed an R2-10 killed-app Decline
   regression: ringing and decline both signed sender sequence 1, so the caller
   admitted ringing and rejected the later decline as non-monotonic. The
