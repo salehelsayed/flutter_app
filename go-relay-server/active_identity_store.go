@@ -85,12 +85,17 @@ type activeIdentityStore struct {
 	generation        uint64
 	saved             uint64
 	healthy           bool
+	buffered          bool
 	engagementEnabled bool
 	weeks             map[string]*activeEngagementSketches
 	durableEngagement []activeEngagementWeek
 }
 
 func newActiveIdentityStoreWithEngagement(path string, key []byte, now func() time.Time, enabled bool) (*activeIdentityStore, error) {
+	return newActiveWindowStore(path, key, now, enabled, false)
+}
+
+func newActiveWindowStore(path string, key []byte, now func() time.Time, engagement, buffered bool) (*activeIdentityStore, error) {
 	if path == "" || now == nil {
 		return nil, errActiveIdentityStoreInput
 	}
@@ -106,7 +111,7 @@ func newActiveIdentityStoreWithEngagement(path string, key []byte, now func() ti
 	_, _ = mac.Write([]byte("mknoon/active-identities/v1/snapshot-key\x00"))
 	s := &activeIdentityStore{
 		path: path, keyID: hex.EncodeToString(mac.Sum(nil)),
-		now: now, write: appDiagnosticAtomicWrite, sketches: sketches, engagementEnabled: enabled,
+		now: now, write: appDiagnosticAtomicWrite, sketches: sketches, engagementEnabled: engagement, buffered: buffered,
 	}
 	s.mu.Lock()
 	at := s.now()
@@ -386,18 +391,25 @@ func (s *activeIdentityStore) pruneLocked(midnight time.Time) {
 }
 
 func (s *activeIdentityStore) flushThrough(target uint64) error {
+	return s.saveThrough(target, false)
+}
+
+func (s *activeIdentityStore) saveThrough(target uint64, checkpoint bool) error {
 	s.flushMu.Lock()
 	defer s.flushMu.Unlock()
 	s.mu.Lock()
-	if s.healthy && s.saved >= target {
+	if s.healthy && s.saved >= target && !checkpoint {
 		s.mu.Unlock()
 		return nil
 	}
-	observedAt := s.observedAt
 	disk := activeIdentityStoreDisk{
 		Version: activeIdentityStoreVersion, Calendar: activeIdentityStoreCalendar,
 		KeyID: s.keyID, Generation: s.generation, MeasurementStart: s.measurementStart,
-		ObservedAt: &observedAt, OpenDay: s.openDay, Finalized: append([]activeIdentityFinalized(nil), s.finals...),
+		OpenDay: s.openDay, Finalized: append([]activeIdentityFinalized(nil), s.finals...),
+	}
+	if !s.buffered || checkpoint {
+		observedAt := s.observedAt
+		disk.ObservedAt = &observedAt
 	}
 	dates := make([]string, 0, len(s.sketches.days))
 	for day := range s.sketches.days {

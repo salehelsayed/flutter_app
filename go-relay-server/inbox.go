@@ -2716,7 +2716,7 @@ type InboxStore struct {
 	stickerMetrics   *stickerMetrics
 	appDiagnostics   *appDiagnosticStore
 	activeIdentities *activeIdentityStore
-	activeDevices    *activeIdentityStore
+	activeDevices    *activeDeviceStore
 	featureUse       *featureUseStore
 	backend          InboxBackend
 	push             *PushService
@@ -3125,6 +3125,9 @@ func (is *InboxStore) recordStoredAndLaunchPush(toPeerId string, entry inboxMess
 }
 
 func (is *InboxStore) recordStoredWithoutPush(toPeerId string, entry inboxMessage) {
+	if is.activeDevices != nil && eligibleActiveDeviceInboxAdmission(toPeerId, entry) {
+		is.activeDevices.observe(entry.From)
+	}
 	inboxStoredCounter.Inc()
 	if biz != nil {
 		biz.RecordMessageStored()
@@ -4692,6 +4695,10 @@ func HandleInboxStream(
 	turnCredentials TurnCredentialIssuer,
 	callControls ...*CallControlService,
 ) {
+	if inbox != nil && inbox.activeDevices != nil {
+		inbox.activeDevices.beginRequest()
+		defer inbox.activeDevices.endRequest()
+	}
 	start := time.Now()
 	activeStreams.WithLabelValues("inbox").Inc()
 	streamResult := "ok"

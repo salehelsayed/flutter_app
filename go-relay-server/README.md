@@ -40,6 +40,31 @@
 
 Before first starting a relay with BL-29 coverage metadata, stop the old process and copy the existing `MKNOON_RELAY_ACTIVE_IDENTITIES_SNAPSHOT_PATH` file aside with its owner and permissions preserved. Restore that old-format snapshot before restarting the old binary on rollback.
 
+## Beta relay active devices
+
+Set `MKNOON_RELAY_ACTIVE_DEVICES_ENABLED=true` on beta relays to enable this
+separate estimate. It defaults to off. The device counter uses the configured
+32-byte `MKNOON_RELAY_ACTIVE_IDENTITIES_KEY` to derive its own key and writes a
+separate snapshot by appending `.active-devices` to
+`MKNOON_RELAY_ACTIVE_IDENTITIES_SNAPSHOT_PATH`. Keep both files in the private
+counter directory. The canonical active-identity counter keeps its own
+consent gate, configuration and snapshot.
+
+The device estimate counts authenticated transport peers for newly accepted
+eligible Thoughts, explicit direct chat messages, typed protected group
+messages and call mailbox signaling. Call mailbox storage can include
+signaling before a call connects. Direct traffic that bypasses the relay and
+ambiguous group messages are outside the estimate. The beta device estimate
+includes devices with Diagnostics off. Thought opt-outs still exclude the
+corresponding Thought events.
+
+`relay_active_devices_estimated` reports the 1-, 7- and 30-day estimates for
+closed Berlin days. `relay_active_devices_coverage_partial` marks incomplete
+day observation. The relay keeps only keyed sketches and aggregate counts.
+Normal writes batch observations. An interrupted process can lose events
+since its last snapshot, so only a drained shutdown saves a coverage
+checkpoint for the open day.
+
 ## Direct APNs VoIP calling
 
 The direct PushKit provider is separate from Firebase and is default-off. It

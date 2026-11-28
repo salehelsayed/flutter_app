@@ -49,7 +49,7 @@ func (s *InboxStore) Describe(ch chan<- *prometheus.Desc) {
 
 func (s *InboxStore) Collect(ch chan<- prometheus.Metric) {
 	if s != nil && s.activeDevices != nil {
-		collectActiveDevices(ch, s.activeDevices)
+		s.activeDevices.collect(ch)
 	}
 	var daily []activeIdentityFinalized
 	var weekly []activeEngagementWeek

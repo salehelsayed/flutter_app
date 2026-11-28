@@ -1030,6 +1030,11 @@ func (is *InboxStore) StoreAckCustody(
 
 	switch result {
 	case InboxStoreResultStored:
+		if is.activeDevices != nil && custodyKind == ackCustodyGroupContentKind && !storedEntry.QuietRecovery {
+			if _, _, isMessage := extractGroupContentPushMetadata(storedEntry.Message); isMessage {
+				is.activeDevices.observe(storedEntry.From)
+			}
+		}
 		recordAckCustodyStoreResult(ackCustodyStoreMetricStored)
 		if handled {
 			is.recordStoredWithoutPush(toPeerID, storedEntry)

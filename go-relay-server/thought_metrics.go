@@ -196,10 +196,12 @@ func (m *thoughtMetrics) rotateLocked() {
 	}
 }
 
-// Called only after accepted inbox storage. Use authored UTC ISO week, not
-// retry/recipient delivery time, so a late replay cannot create another week.
-// Only existing outer routing metadata is read; no encrypted content is opened.
-func (m *thoughtMetrics) record(entry inboxMessage) {
+type thoughtMetricEnvelope struct {
+	postID  string
+	created time.Time
+}
+
+func eligibleThoughtMetricEnvelope(entry inboxMessage) (thoughtMetricEnvelope, bool) {
 	var envelope struct {
 		Type          string          `json:"type"`
 		PostID        string          `json:"post_id"`
@@ -209,22 +211,33 @@ func (m *thoughtMetrics) record(entry inboxMessage) {
 	}
 	if json.Unmarshal([]byte(entry.Message), &envelope) != nil || envelope.Type != "post_create" ||
 		envelope.PostID == "" || entry.From == "" || envelope.Sender != entry.From {
-		return
+		return thoughtMetricEnvelope{}, false
 	}
 	// Only absent or explicit false is eligible. RawMessage preserves null and
 	// other invalid types so malformed withdrawal flags cannot opt back in.
 	if len(envelope.MetricsOptOut) > 0 && !bytes.Equal(bytes.TrimSpace(envelope.MetricsOptOut), []byte("false")) {
-		return
+		return thoughtMetricEnvelope{}, false
 	}
 	created, err := time.Parse(time.RFC3339Nano, envelope.Created)
 	if err != nil {
+		return thoughtMetricEnvelope{}, false
+	}
+	return thoughtMetricEnvelope{postID: envelope.PostID, created: created}, true
+}
+
+// Called only after accepted inbox storage. Use authored UTC ISO week, not
+// retry/recipient delivery time, so a late replay cannot create another week.
+// Only existing outer routing metadata is read; no encrypted content is opened.
+func (m *thoughtMetrics) record(entry inboxMessage) {
+	envelope, eligible := eligibleThoughtMetricEnvelope(entry)
+	if !eligible {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.rotateLocked()
 	current := thoughtWeekStart(m.now())
-	start := thoughtWeekStart(created)
+	start := thoughtWeekStart(envelope.created)
 	if start.After(current) || start.Before(current.AddDate(0, 0, -7*(thoughtMetricsWeeks-1))) {
 		return
 	}
@@ -234,7 +247,7 @@ func (m *thoughtMetrics) record(entry inboxMessage) {
 		week = thoughtWeek{hyperloglog.NewNoSparse(), hyperloglog.NewNoSparse()}
 		m.weeks[key] = week
 	}
-	week.posts.Insert([]byte(envelope.PostID))
+	week.posts.Insert([]byte(envelope.postID))
 	week.posters.Insert(thoughtHash(m.key, "sender", entry.From))
 	m.generation++
 }

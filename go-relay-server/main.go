@@ -360,8 +360,14 @@ func main() {
 	if err := relayService.Close(); err != nil {
 		log.Printf("[NODE] Error stopping circuit relay service: %v", err)
 	}
-	if err := h.Close(); err != nil {
-		log.Printf("[NODE] Error during shutdown: %v", err)
+	hostCloseErr := h.Close()
+	if hostCloseErr != nil {
+		log.Printf("[NODE] Error during shutdown: %v", hostCloseErr)
+	}
+	if inbox.activeDevices != nil {
+		if err := inbox.activeDevices.finish(hostCloseErr == nil); err != nil {
+			log.Print("[ACTIVE_DEVICES] Final snapshot unavailable")
+		}
 	}
 	if biz.thoughts != nil {
 		if err := biz.thoughts.flush(); err != nil {
@@ -452,6 +458,9 @@ func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, g
 				// Close observed Berlin days even when no client reports activity.
 				// The store withholds estimates if this durable write fails.
 				_ = inbox.activeIdentities.advance()
+			}
+			if inbox.activeDevices != nil {
+				_ = inbox.activeDevices.advance()
 			}
 			if inbox.featureUse != nil {
 				_ = inbox.featureUse.advance()

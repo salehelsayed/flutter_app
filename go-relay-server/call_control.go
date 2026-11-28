@@ -255,6 +255,7 @@ func (libp2pCallEndpointSignatureVerifier) VerifyCallEndpoint(
 }
 
 type CallControlService struct {
+	activeDevices               *activeDeviceStore
 	diagnostics                 *callDiagnosticStore
 	backend                     *redisCallControlStore
 	dispatcher                  CallWakeDispatcher
@@ -315,6 +316,9 @@ func (s *CallControlService) Store(
 	receipt, err := s.backend.Store(ctx, authenticatedSender, request, now)
 	if err != nil {
 		return CallStoreReceipt{}, err
+	}
+	if receipt.StoreStatus == CallStoreStatusStored && s.activeDevices != nil {
+		s.activeDevices.observe(authenticatedSender)
 	}
 	if span := callDiagnosticSpanFromContext(ctx); span != nil {
 		span.store.bindCommitted(authenticatedSender, request.RecipientDevicePeerID, request.CallHandle, &span.diagnostics)

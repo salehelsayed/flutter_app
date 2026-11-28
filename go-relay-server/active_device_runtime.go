@@ -7,8 +7,8 @@ var (
 	activeDeviceCoverageDesc = prometheus.NewDesc("relay_active_devices_coverage_partial", "Whether observation of the closed Berlin day for relay active devices was partial or unknown.", []string{"day"}, nil)
 )
 
-func collectActiveDevices(ch chan<- prometheus.Metric, store *activeIdentityStore) {
-	days, ready := store.finalized()
+func (s *activeDeviceStore) collect(ch chan<- prometheus.Metric) {
+	days, ready := s.finalized()
 	if !ready {
 		return
 	}
