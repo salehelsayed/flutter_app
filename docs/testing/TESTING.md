@@ -15045,6 +15045,18 @@ The full `go-relay` row passed 2,337 named cases and `go vet` exited 0.
 The other 15 change selections were outside this unit's host execution
 (Kayan `m-27def7a5`, AX42 `/srv/evidence/ax42-cd-bl29-green2/`).
 
+The separate beta Active devices unit counts authenticated relay installations.
+On RED `98037ef7c75116997111ff9d28e770ae190753ff` the 11-device overlap and
+1-device call fixtures reached the scrape with zero counts after successful
+framed inbox admissions (exit 1, `m-84038cd2`). The initial GREEN
+`7c66d87c4c910a2a63a284e2b4c89f036d1dbc0e` retains its passing runner evidence
+(`m-79b16fe9`). Final `1bf0f67104827dac528c335427be7ce22a5b59d1` adds the
+authored Berlin-day fence. A Thought delivered to another recipient after
+midnight still stores and leaves the next-day DAU at zero. Vet exited 0,
+333 focused race cases and 2,352 full relay cases passed with no failures
+or skips. Nineteen wider change selections were outside this execution
+(`m-dcca48d9`, AX42 `/srv/evidence/ax42-cd-devices-green2/`).
+
 The daily `active_identity_v1` proof binds the logical root account to the
 stream's authenticated transport peer, including a linked secondary. At
 `5e72cda357e97dafa60bc50942ebe1ad925a87a4`, all 21 original named RED failure
