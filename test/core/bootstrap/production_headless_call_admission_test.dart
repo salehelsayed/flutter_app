@@ -4,10 +4,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/app/bootstrap/production_headless_call_admission.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
+import 'package:flutter_app/features/call/domain/call_wire_signal.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -73,7 +75,7 @@ void main() {
           order.add('display');
           expect(invite.senderAccountPeerId, 'caller-account');
           expect(invite.callId.value, invocation.callId);
-          expect(invite.event, CallSignalType.invite);
+          expect(invite.eventWireName, 'invite');
           return display;
         },
         closeResources: () async {
@@ -802,6 +804,14 @@ void main() {
   test(
     'every non-terminal verdict leaves the rows for foreground adoption',
     () async {
+      final refusals = <Object?>[];
+      debugSetFlowEventSink((payload) {
+        if (payload['event'] == 'CALL_HEADLESS_ADMISSION_ROW_REFUSED') {
+          refusals.add(payload['details']);
+          throw StateError('diagnostic sink failed');
+        }
+      });
+      addTearDown(() => debugSetFlowEventSink(null));
       final admittedMailbox = _Mailbox(<CallMailboxEvent>[_event()]);
       final admitted = MailboxProductionHeadlessCallAdmissionSession(
         mailboxClient: admittedMailbox,
@@ -809,7 +819,7 @@ void main() {
         closeResources: () async => _Session.safeCleanup,
       );
       expect(
-        await admitted.evaluate(invocation),
+        await admitted.evaluate(invocation).timeout(const Duration(seconds: 3)),
         HeadlessCallAdmissionDisposition.admitted,
       );
 
@@ -822,14 +832,16 @@ void main() {
         closeResources: () async => _Session.safeCleanup,
       );
       expect(
-        await stale.evaluate(
-          HeadlessCallAdmissionInvocation(
-            nonce: invocation.nonce,
-            callId: invocation.callId,
-            wakeHandle: invocation.wakeHandle,
-            expiresAtMs: 1_800_000_051_000,
-          ),
-        ),
+        await stale
+            .evaluate(
+              HeadlessCallAdmissionInvocation(
+                nonce: invocation.nonce,
+                callId: invocation.callId,
+                wakeHandle: invocation.wakeHandle,
+                expiresAtMs: 1_800_000_051_000,
+              ),
+            )
+            .timeout(const Duration(seconds: 3)),
         HeadlessCallAdmissionDisposition.emptyOrAlreadyAcked,
       );
 
@@ -839,12 +851,13 @@ void main() {
         authenticateEvent: ({required invocation, required event}) async {
           throw const IncomingCallPrePresentationAdmissionException(
             IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+            gate: IncomingCallPrePresentationAdmissionGate.mailboxBinding,
           );
         },
         closeResources: () async => _Session.safeCleanup,
       );
       expect(
-        await rejected.evaluate(invocation),
+        await rejected.evaluate(invocation).timeout(const Duration(seconds: 3)),
         HeadlessCallAdmissionDisposition.permanentReject,
       );
 
@@ -854,14 +867,22 @@ void main() {
         authenticateEvent: ({required invocation, required event}) async {
           throw const IncomingCallPrePresentationAdmissionException(
             IncomingCallPrePresentationAdmissionFailureCode.deferred,
+            gate: IncomingCallPrePresentationAdmissionGate.endpointUnavailable,
           );
         },
         closeResources: () async => _Session.safeCleanup,
       );
       expect(
-        await deferred.evaluate(invocation),
+        await deferred.evaluate(invocation).timeout(const Duration(seconds: 3)),
         HeadlessCallAdmissionDisposition.deferred,
       );
+      expect(refusals, [
+        {
+          'outcome': 'permanentReject',
+          'reasonCode': 'mailbox_binding_mismatch',
+        },
+        {'outcome': 'deferred', 'reasonCode': 'endpoint_unavailable'},
+      ]);
 
       for (final mailbox in <_Mailbox>[
         admittedMailbox,
@@ -956,6 +977,130 @@ void main() {
     );
   });
 
+  group('presentation failure reply mode', () {
+    final failureInvocation = HeadlessCallAdmissionInvocation(
+      nonce: invocation.nonce,
+      callId: invocation.callId,
+      wakeHandle: invocation.wakeHandle,
+      expiresAtMs: invocation.expiresAtMs,
+      mode: HeadlessCallAdmissionMode.presentationFailureReply,
+    );
+    const terminalMessageId = '55555555-5555-4555-8555-555555555555';
+    const bound = Duration(seconds: 2);
+
+    test('acknowledges only custody or an authenticated terminal', () async {
+      for (final scenario in ['delivered', 'unsent', 'terminal']) {
+        final events = <String>[];
+        final invite = _event();
+        final terminal = _event(messageId: terminalMessageId);
+        final mailbox = _Mailbox([
+          invite,
+          if (scenario == 'terminal') terminal,
+        ], onAck: () => events.add('acked'));
+        final authenticate = _signalAuthenticator();
+        final session = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: mailbox,
+          authenticateEvent: ({required invocation, required event}) async {
+            final authenticated = await authenticate(
+              invocation: invocation,
+              event: event,
+            );
+            return HeadlessAuthenticatedMailboxEvent(
+              event: authenticated.event,
+              signal: authenticated.signal,
+              rollbackReplay: () => events.add('released ${event.messageId}'),
+            );
+          },
+          presentationFailureReplySender: (signal, handle) async {
+            expect(signal.messageId, invite.messageId);
+            expect(handle, failureInvocation.callId);
+            events.add('reply');
+            return scenario == 'delivered';
+          },
+          closeResources: () async => _Session.safeCleanup,
+        );
+
+        expect(
+          await session.evaluate(failureInvocation).timeout(bound),
+          scenario == 'unsent'
+              ? HeadlessCallAdmissionDisposition.deferred
+              : HeadlessCallAdmissionDisposition.terminal,
+          reason: scenario,
+        );
+        expect(events, [
+          if (scenario != 'terminal') 'reply',
+          if (scenario != 'unsent') 'acked',
+          if (scenario == 'terminal') 'released ${terminal.messageId}',
+          'released ${invite.messageId}',
+        ]);
+        expect(mailbox.ackedMessageIds, [
+          if (scenario != 'unsent')
+            [invite.messageId, if (scenario == 'terminal') terminal.messageId],
+        ]);
+      }
+    });
+
+    test(
+      'leaves incomplete, deferred and ambiguous invites in custody',
+      () async {
+        for (final scenario in [
+          'partial',
+          'deferred',
+          'different valid expiry',
+          'multiple',
+        ]) {
+          var replies = 0;
+          final pending = scenario == 'different valid expiry'
+              ? _event(expiresAtMs: failureInvocation.expiresAtMs - 1)
+              : _event();
+          final mailbox = _Mailbox([
+            pending,
+            if (scenario == 'deferred' || scenario == 'multiple') pending,
+          ], hasMore: scenario == 'partial');
+          final authenticate = _signalAuthenticator();
+          var calls = 0;
+          var released = 0;
+          final session = MailboxProductionHeadlessCallAdmissionSession(
+            mailboxClient: mailbox,
+            authenticateEvent: ({required invocation, required event}) async {
+              if (++calls == 2 && scenario == 'deferred') {
+                throw const IncomingCallPrePresentationAdmissionException(
+                  IncomingCallPrePresentationAdmissionFailureCode.deferred,
+                );
+              }
+              final result = await authenticate(
+                invocation: invocation,
+                event: event,
+              );
+              return HeadlessAuthenticatedMailboxEvent(
+                event: result.event,
+                signal: result.signal,
+                rollbackReplay: () => released++,
+              );
+            },
+            presentationFailureReplySender: (_, _) async {
+              replies++;
+              return true;
+            },
+            closeResources: () async => _Session.safeCleanup,
+          );
+          expect(
+            await session.evaluate(failureInvocation).timeout(bound),
+            HeadlessCallAdmissionDisposition.deferred,
+            reason: scenario,
+          );
+          expect(replies, 0, reason: scenario);
+          expect(mailbox.ackedHandles, isEmpty, reason: scenario);
+          expect(released, switch (scenario) {
+            'partial' => 0,
+            'multiple' => 2,
+            _ => 1,
+          }, reason: scenario);
+        }
+      },
+    );
+  });
+
   group('decline reply mode', () {
     final declineInvocation = HeadlessCallAdmissionInvocation(
       nonce: invocation.nonce,
@@ -1045,7 +1190,7 @@ void main() {
     test(
       'a reply that reaches no custody leaves the rows and defers',
       () async {
-        for (final sender in <HeadlessDeclineReplySender>[
+        for (final sender in <HeadlessTerminalReplySender>[
           (_, _) async => false,
           (_, _) async => throw StateError('relay unreachable'),
         ]) {
@@ -1268,8 +1413,8 @@ void main() {
       );
       final recorded = recorder.calls.single;
       expect(recorded.reason, CallEndReason.callerCancelled);
-      expect(recorded.terminal.event, CallSignalType.terminate);
-      expect(recorded.invite?.event, CallSignalType.invite);
+      expect(recorded.terminal.eventWireName, 'terminate');
+      expect(recorded.invite?.eventWireName, 'invite');
       expect(recorded.terminal.senderAccountPeerId, 'caller-account');
     });
 
@@ -1338,14 +1483,20 @@ AuthenticateHeadlessMailboxEvent _bindingAuthenticator(
 /// 406: records what the headless session asked to be projected.
 final class _HistoryRecorder {
   final calls =
-      <({CallSignal terminal, CallSignal? invite, CallEndReason reason})>[];
+      <
+        ({
+          CallWireSignal terminal,
+          CallWireSignal? invite,
+          CallEndReason reason,
+        })
+      >[];
   Object? error;
 
   Future<void> record({
-    required CallSignal terminal,
+    required CallWireSignal terminal,
     required String callHandle,
     required CallEndReason reason,
-    CallSignal? invite,
+    CallWireSignal? invite,
   }) async {
     calls.add((terminal: terminal, invite: invite, reason: reason));
     if (error != null) throw error!;

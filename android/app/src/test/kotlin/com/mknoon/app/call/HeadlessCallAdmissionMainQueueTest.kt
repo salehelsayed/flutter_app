@@ -56,7 +56,7 @@ class HeadlessCallAdmissionMainQueueTest {
             nonceFactory = { "main-queue-regression" },
             presentAuthenticated = { _, _, _ -> error("Deferred admission must not present") },
             terminalizeAuthenticated = { _, _ -> error("Deferred admission must not terminalize") },
-            releaseAdmission = { callId, requireTerminal -> releases += callId to requireTerminal },
+            releaseAdmission = { callId, release -> releases += callId to release.requireTerminal },
             diagnostic = { _, diagnostic -> diagnostics += diagnostic },
             foregroundOwnsRuntime = {
                 val snapshot = broker.snapshot()

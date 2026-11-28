@@ -31,12 +31,15 @@ import 'package:flutter_app/features/call/application/call_signaling_service.dar
 import 'package:flutter_app/features/call/application/headless_call_decline_reply.dart';
 import 'package:flutter_app/features/call/application/headless_call_ringing_reply.dart';
 import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
+import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
+import 'package:flutter_app/features/call/domain/call_wire_signal.dart';
 import 'package:flutter_app/features/call/infrastructure/bridge_call_direct_transport.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_trusted_roster_provider.dart';
 import 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart';
+import 'package:flutter_app/features/call/infrastructure/headless_call_v2_reply.dart';
 import 'package:flutter_app/features/call/infrastructure/production_call_endpoint_resolution.dart';
 import 'package:flutter_app/features/call/infrastructure/received_call_wake_handle_store_impl.dart';
 import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
@@ -89,13 +92,25 @@ final class HeadlessAuthenticatedMailboxEvent {
     required this.event,
     required void Function() rollbackReplay,
     this.signal,
-  }) : _rollbackReplay = rollbackReplay;
+  }) : v2Admission = null,
+       _rollbackReplay = rollbackReplay;
+
+  HeadlessAuthenticatedMailboxEvent._authenticated(
+    AuthenticatedIncomingCallWireAdmission admission,
+  ) : event = CallSignalType.parse(admission.signal.eventWireName),
+      signal = admission is AuthenticatedIncomingCallAdmission
+          ? admission.signal
+          : null,
+      v2Admission = admission is AuthenticatedIncomingCallAdmissionV2
+          ? admission
+          : null,
+      _rollbackReplay = admission.rollbackReplay;
 
   final CallSignalType event;
 
-  /// The decoded signal when the authenticator hands it over: the decline
-  /// reply builds the caller's `reject` from the invite.
   final CallSignal? signal;
+  final AuthenticatedIncomingCallAdmissionV2? v2Admission;
+  CallWireSignal? get wireSignal => v2Admission?.signal ?? signal;
   final void Function() _rollbackReplay;
 
   void rollbackReplay() => _rollbackReplay();
@@ -110,15 +125,44 @@ typedef AuthenticateHeadlessMailboxEvent =
       required CallMailboxEvent event,
     });
 
+AuthenticateHeadlessMailboxEvent createProductionHeadlessMailboxAuthenticator({
+  required SecureCallEnvelopeCodec codec,
+  required CallTrustedRosterProvider roster,
+  required CallLocalAuthorityProvider localAuthorityProvider,
+  bool videoEnabled = false,
+  ResolveHeadlessCallEndpoint? resolveV2Endpoint,
+  int Function()? nowMs,
+}) {
+  final admission = IncomingCallPrePresentationAdmission(
+    codec: codec,
+    trustedRosterProvider: roster,
+    localAuthorityProvider: localAuthorityProvider,
+    videoEnabled: videoEnabled,
+    resolveV2Endpoint: resolveV2Endpoint,
+    nowMs: nowMs,
+  );
+  return ({required invocation, required event}) async {
+    final authenticated = await admission.authenticateVersionedMailboxEvent(
+      nativeCallId: invocation.callId,
+      wakeExpiresAtMs: invocation.expiresAtMs,
+      event: event,
+    );
+    return HeadlessAuthenticatedMailboxEvent._authenticated(authenticated);
+  };
+}
+
 /// Sends the caller one `reject` for [invite] under [callHandle], the mailbox
 /// handle the invite row was retrieved with (the caller keys its context by
 /// it, not by the call id). Resolves true once the reject reached custody
 /// (direct acceptance or mailbox store); never throws.
-typedef HeadlessDeclineReplySender =
+typedef HeadlessTerminalReplySender =
     Future<bool> Function(CallSignal invite, String callHandle);
 
 typedef HeadlessRingingReplySender =
     Future<bool> Function(CallSignal invite, String callHandle);
+
+typedef HeadlessCallV2ReplySender =
+    Future<bool> Function(AuthenticatedIncomingCallAdmissionV2 invite);
 
 /// 406: writes the local terminal call-history row for a call that ended with
 /// no coordinator to project it.
@@ -129,10 +173,10 @@ typedef HeadlessRingingReplySender =
 /// earlier run and only the terminal row remains.
 typedef HeadlessCallHistoryRecorder =
     Future<void> Function({
-      required CallSignal terminal,
+      required CallWireSignal terminal,
       required String callHandle,
       required CallEndReason reason,
-      CallSignal? invite,
+      CallWireSignal? invite,
     });
 
 /// Preserves an authenticated connected checkpoint before the ordinary
@@ -177,6 +221,11 @@ HeadlessCallHistoryRecorder createProductionHeadlessCallHistoryRecorder({
   };
 }
 
+typedef _AuthenticatedMailboxRow = ({
+  CallMailboxEvent event,
+  HeadlessAuthenticatedMailboxEvent admission,
+});
+
 /// Evaluates one exact-handle mailbox page without dispatching coordinator
 /// events, acknowledging custody, or starting media. All provisional replay
 /// reservations are rolled back so the foreground canonical owner can
@@ -190,10 +239,13 @@ final class MailboxProductionHeadlessCallAdmissionSession
     required CallMailboxClient mailboxClient,
     required AuthenticateHeadlessMailboxEvent authenticateEvent,
     required Future<HeadlessCallAdmissionCleanup> Function() closeResources,
-    HeadlessDeclineReplySender? declineReplySender,
+    HeadlessTerminalReplySender? declineReplySender,
     HeadlessRingingReplySender? ringingReplySender,
+    HeadlessTerminalReplySender? presentationFailureReplySender,
+    HeadlessCallV2ReplySender? declineV2ReplySender,
+    HeadlessCallV2ReplySender? ringingV2ReplySender,
     HeadlessCallHistoryRecorder? historyRecorder,
-    Future<HeadlessIncomingCallDisplay?> Function(CallSignal invite)?
+    Future<HeadlessIncomingCallDisplay?> Function(CallWireSignal invite)?
     resolveDisplay,
     Duration displayTimeout = const Duration(seconds: 1),
   }) : _mailboxClient = mailboxClient,
@@ -201,17 +253,23 @@ final class MailboxProductionHeadlessCallAdmissionSession
        _closeResources = closeResources,
        _declineReplySender = declineReplySender,
        _ringingReplySender = ringingReplySender,
+       _presentationFailureReplySender = presentationFailureReplySender,
+       _declineV2ReplySender = declineV2ReplySender,
+       _ringingV2ReplySender = ringingV2ReplySender,
        _historyRecorder = historyRecorder,
        _resolveDisplay = resolveDisplay,
        _displayTimeout = displayTimeout;
 
   final CallMailboxClient _mailboxClient;
   final AuthenticateHeadlessMailboxEvent _authenticateEvent;
-  final HeadlessDeclineReplySender? _declineReplySender;
+  final HeadlessTerminalReplySender? _declineReplySender;
   final HeadlessRingingReplySender? _ringingReplySender;
+  final HeadlessTerminalReplySender? _presentationFailureReplySender;
+  final HeadlessCallV2ReplySender? _declineV2ReplySender;
+  final HeadlessCallV2ReplySender? _ringingV2ReplySender;
   final HeadlessCallHistoryRecorder? _historyRecorder;
   final Future<HeadlessCallAdmissionCleanup> Function() _closeResources;
-  final Future<HeadlessIncomingCallDisplay?> Function(CallSignal invite)?
+  final Future<HeadlessIncomingCallDisplay?> Function(CallWireSignal invite)?
   _resolveDisplay;
   final Duration _displayTimeout;
   @override
@@ -230,16 +288,18 @@ final class MailboxProductionHeadlessCallAdmissionSession
   ) => _evaluation ??= switch (invocation.mode) {
     HeadlessCallAdmissionMode.admission => _evaluateOnce(invocation),
     HeadlessCallAdmissionMode.declineReply => _declineReplyOnce(invocation),
-    HeadlessCallAdmissionMode.ringingReply => _ringingReplyOnce(invocation),
+    HeadlessCallAdmissionMode.ringingReply ||
+    HeadlessCallAdmissionMode.presentationFailureReply =>
+      _presentationReplyOnce(invocation),
   };
 
-  /// A second, short headless run begins only after native presentation was
-  /// committed. It reauthenticates the still-unacked invite and checks that
-  /// the exact native call is still ringing before sending the caller's reply.
-  /// Foreground adoption retains custody of the invite and its own sequence.
-  Future<HeadlessCallAdmissionDisposition> _ringingReplyOnce(
+  /// Reauthenticates the invite after native presentation has settled.
+  /// A ringing reply leaves custody for the foreground owner.
+  Future<HeadlessCallAdmissionDisposition> _presentationReplyOnce(
     HeadlessCallAdmissionInvocation invocation,
   ) async {
+    final failed =
+        invocation.mode == HeadlessCallAdmissionMode.presentationFailureReply;
     CallMailboxRetrieveResult page;
     try {
       page = await _mailboxClient.retrieve(
@@ -252,9 +312,8 @@ final class MailboxProductionHeadlessCallAdmissionSession
     if (page.hasMore || page.events.isEmpty) {
       return HeadlessCallAdmissionDisposition.deferred;
     }
-    final reservations = <HeadlessAuthenticatedMailboxEvent>[];
-    CallSignal? invite;
-    var terminal = false;
+    final rows = <_AuthenticatedMailboxRow>[];
+    final invites = <_AuthenticatedMailboxRow>[];
     try {
       for (final event in page.events) {
         final authenticated = await _authenticateEvent(
@@ -267,29 +326,52 @@ final class MailboxProductionHeadlessCallAdmissionSession
           ),
           event: event,
         );
-        reservations.add(authenticated);
-        if (authenticated.event == CallSignalType.reject ||
-            authenticated.event == CallSignalType.terminate) {
-          terminal = true;
-        } else if (authenticated.event == CallSignalType.invite) {
-          if (invite != null) return HeadlessCallAdmissionDisposition.deferred;
-          invite = authenticated.signal;
-        } else {
+        final row = (event: event, admission: authenticated);
+        rows.add(row);
+        if (failed && authenticated.v2Admission != null) {
           return HeadlessCallAdmissionDisposition.deferred;
         }
+        switch (authenticated.event) {
+          case CallSignalType.reject:
+          case CallSignalType.terminate:
+            break;
+          case CallSignalType.invite:
+            invites.add(row);
+          default:
+            return HeadlessCallAdmissionDisposition.deferred;
+        }
       }
-      final sender = _ringingReplySender;
-      if (terminal || invite == null || sender == null) {
+      final terminal = _matchingTerminal(rows, invites);
+      if (terminal != null) {
+        if (!failed) return HeadlessCallAdmissionDisposition.deferred;
+        await _acknowledgeEndedCall(invocation.callId, rows, terminal);
+        return HeadlessCallAdmissionDisposition.terminal;
+      }
+      if (invites.length != 1) {
         return HeadlessCallAdmissionDisposition.deferred;
       }
-      return await sender(invite, invocation.callId)
+      final invite = invites.single;
+      if (failed) {
+        final sender = _presentationFailureReplySender;
+        final signal = invite.admission.signal;
+        if (invite.event.expiresAtMs != invocation.expiresAtMs ||
+            sender == null ||
+            signal == null ||
+            !await sender(signal, invocation.callId)) {
+          return HeadlessCallAdmissionDisposition.deferred;
+        }
+        await _acknowledgeEndedCall(invocation.callId, rows, invite);
+        return HeadlessCallAdmissionDisposition.terminal;
+      }
+      final send = _replyFor(invite, invocation.callId, ringing: true);
+      return send != null && await send()
           ? HeadlessCallAdmissionDisposition.terminal
           : HeadlessCallAdmissionDisposition.deferred;
     } catch (_) {
       return HeadlessCallAdmissionDisposition.deferred;
     } finally {
-      for (final reservation in reservations.reversed) {
-        reservation.rollbackReplay();
+      for (final row in rows.reversed) {
+        row.admission.rollbackReplay();
       }
     }
   }
@@ -323,15 +405,14 @@ final class MailboxProductionHeadlessCallAdmissionSession
     // the row it was issued for (equal expiry); every other row of the call
     // is authenticated against its own expiry, so a terminate can end the
     // ringing call and a stale wake can never re-ring an older invite.
-    final reservations = <HeadlessAuthenticatedMailboxEvent>[];
-    final authenticatedMessageIds = <String>[];
-    var terminal = false;
-    CallSignal? terminalSignal;
-    CallSignal? inviteSignal;
+    final rows = <_AuthenticatedMailboxRow>[];
+    final invites = <_AuthenticatedMailboxRow>[];
+    CallWireSignal? inviteSignal;
     var boundInvites = 0;
     var companionInvites = 0;
     var deferredRows = false;
     var rejectedRows = false;
+    var unresolvedV2Invite = false;
     try {
       for (final event in page.events) {
         final bound = event.expiresAtMs == invocation.expiresAtMs;
@@ -350,6 +431,22 @@ final class MailboxProductionHeadlessCallAdmissionSession
             event: event,
           );
         } on IncomingCallPrePresentationAdmissionException catch (error) {
+          if (error.gate ==
+              IncomingCallPrePresentationAdmissionGate.endpointUnavailable) {
+            unresolvedV2Invite = true;
+          }
+          try {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CALL_HEADLESS_ADMISSION_ROW_REFUSED',
+              details: <String, Object?>{
+                'outcome': error.code.name,
+                'reasonCode': error.reasonCode,
+              },
+            );
+          } catch (_) {
+            // Diagnostics cannot change admission or cleanup behavior.
+          }
           switch (error.code) {
             case IncomingCallPrePresentationAdmissionFailureCode.deferred:
               deferredRows = true;
@@ -360,15 +457,15 @@ final class MailboxProductionHeadlessCallAdmissionSession
           }
           continue;
         }
-        reservations.add(authenticated);
-        authenticatedMessageIds.add(event.messageId);
+        final row = (event: event, admission: authenticated);
+        rows.add(row);
         switch (authenticated.event) {
           case CallSignalType.reject:
           case CallSignalType.terminate:
-            terminal = true;
-            terminalSignal ??= authenticated.signal;
+            break;
           case CallSignalType.invite:
-            inviteSignal ??= authenticated.signal;
+            invites.add(row);
+            inviteSignal ??= authenticated.wireSignal;
             if (bound) {
               boundInvites++;
             } else {
@@ -378,17 +475,22 @@ final class MailboxProductionHeadlessCallAdmissionSession
             rejectedRows = true;
         }
       }
-      if (terminal) {
+      final terminal = _matchingTerminal(
+        rows,
+        invites,
+        allowV1: !unresolvedV2Invite,
+      );
+      if (terminal != null) {
         // The caller ended this call: no foreground owner is left to adopt
         // it, and its unacknowledged rows would hold one of the recipient's
         // two pending-call slots at the relay until they expire (device
         // 2026-09-05 17:15Z: the next call to the locked Pixel was refused
         // with CALL_RECIPIENT_CAPACITY, "Couldn't start voice call").
-        await _acknowledgeEndedCall(invocation.callId, authenticatedMessageIds);
+        await _acknowledgeEndedCall(invocation.callId, rows, terminal);
         // 406: no foreground owner will ever project this call, so the row has
         // to be written here or the chat shows nothing for it.
         await _recordHistory(
-          terminal: terminalSignal,
+          terminal: terminal.admission.wireSignal,
           callHandle: invocation.callId,
           invite: inviteSignal,
         );
@@ -427,8 +529,8 @@ final class MailboxProductionHeadlessCallAdmissionSession
       _diagnosticCause = 'adoption_failed';
       return HeadlessCallAdmissionDisposition.deferred;
     } finally {
-      for (final reservation in reservations.reversed) {
-        reservation.rollbackReplay();
+      for (final row in rows.reversed) {
+        row.admission.rollbackReplay();
       }
     }
   }
@@ -438,9 +540,9 @@ final class MailboxProductionHeadlessCallAdmissionSession
   /// Best effort by construction: releasing the relay's pending slot is
   /// custody work and must not be undone by a history write that failed.
   Future<void> _recordHistory({
-    required CallSignal? terminal,
+    required CallWireSignal? terminal,
     required String callHandle,
-    CallSignal? invite,
+    CallWireSignal? invite,
   }) async {
     final recorder = _historyRecorder;
     if (recorder == null || terminal == null) return;
@@ -448,7 +550,7 @@ final class MailboxProductionHeadlessCallAdmissionSession
       await recorder(
         terminal: terminal,
         callHandle: callHandle,
-        reason: terminal.event == CallSignalType.reject
+        reason: terminal.eventWireName == CallSignalType.reject.wireName
             ? CallEndReason.declined
             : CallEndReason.callerCancelled,
         invite: invite,
@@ -489,11 +591,10 @@ final class MailboxProductionHeadlessCallAdmissionSession
       _emitDeclineReplyResult('empty');
       return HeadlessCallAdmissionDisposition.emptyOrAlreadyAcked;
     }
-    final reservations = <HeadlessAuthenticatedMailboxEvent>[];
-    final authenticatedMessageIds = <String>[];
-    CallSignal? invite;
-    var terminal = false;
+    final rows = <_AuthenticatedMailboxRow>[];
+    final invites = <_AuthenticatedMailboxRow>[];
     var deferredRows = false;
+    var unresolvedV2Invite = false;
     try {
       for (final event in page.events) {
         final rowInvocation = HeadlessCallAdmissionInvocation(
@@ -514,40 +615,49 @@ final class MailboxProductionHeadlessCallAdmissionSession
               IncomingCallPrePresentationAdmissionFailureCode.deferred) {
             deferredRows = true;
           }
+          if (error.gate ==
+              IncomingCallPrePresentationAdmissionGate.endpointUnavailable) {
+            unresolvedV2Invite = true;
+          }
           continue;
         }
-        reservations.add(authenticated);
-        authenticatedMessageIds.add(event.messageId);
-        switch (authenticated.event) {
-          case CallSignalType.reject:
-          case CallSignalType.terminate:
-            terminal = true;
-          case CallSignalType.invite:
-            invite ??= authenticated.signal;
-          default:
-            break;
-        }
+        final row = (event: event, admission: authenticated);
+        rows.add(row);
+        if (authenticated.event == CallSignalType.invite) invites.add(row);
       }
-      if (terminal) {
-        await _acknowledgeEndedCall(invocation.callId, authenticatedMessageIds);
+      final terminal = _matchingTerminal(
+        rows,
+        invites,
+        allowV1: !unresolvedV2Invite,
+      );
+      if (terminal != null) {
+        await _acknowledgeEndedCall(invocation.callId, rows, terminal);
         _emitDeclineReplyResult('already_ended');
         return HeadlessCallAdmissionDisposition.terminal;
       }
-      final pendingInvite = invite;
+      final pendingInvite = invites
+          .where((row) => row.admission.wireSignal != null)
+          .firstOrNull;
       if (pendingInvite == null) {
         _emitDeclineReplyResult(deferredRows ? 'invite_deferred' : 'no_invite');
         return deferredRows
             ? HeadlessCallAdmissionDisposition.deferred
             : HeadlessCallAdmissionDisposition.permanentReject;
       }
-      final sender = _declineReplySender;
-      if (sender == null) {
+      if (invites.any((row) => row.admission.v2Admission != null) &&
+          (invites.length != 1 ||
+              pendingInvite.event.expiresAtMs != invocation.expiresAtMs)) {
+        _emitDeclineReplyResult('invite_deferred');
+        return HeadlessCallAdmissionDisposition.deferred;
+      }
+      final send = _replyFor(pendingInvite, invocation.callId, ringing: false);
+      if (send == null) {
         _emitDeclineReplyResult('no_sender');
         return HeadlessCallAdmissionDisposition.deferred;
       }
       var sent = false;
       try {
-        sent = await sender(pendingInvite, invocation.callId);
+        sent = await send();
       } catch (_) {
         sent = false;
       }
@@ -555,17 +665,73 @@ final class MailboxProductionHeadlessCallAdmissionSession
         _emitDeclineReplyResult('unsent');
         return HeadlessCallAdmissionDisposition.deferred;
       }
-      await _acknowledgeEndedCall(invocation.callId, authenticatedMessageIds);
+      await _acknowledgeEndedCall(invocation.callId, rows, pendingInvite);
       _emitDeclineReplyResult('sent');
       return HeadlessCallAdmissionDisposition.terminal;
     } catch (_) {
       _emitDeclineReplyResult('error');
       return HeadlessCallAdmissionDisposition.deferred;
     } finally {
-      for (final reservation in reservations.reversed) {
-        reservation.rollbackReplay();
+      for (final row in rows.reversed) {
+        row.admission.rollbackReplay();
       }
     }
+  }
+
+  Future<bool> Function()? _replyFor(
+    _AuthenticatedMailboxRow row,
+    String callHandle, {
+    required bool ringing,
+  }) {
+    final v2 = row.admission.v2Admission;
+    if (v2 != null) {
+      final sender = ringing ? _ringingV2ReplySender : _declineV2ReplySender;
+      return sender == null ? null : () => sender(v2);
+    }
+    final signal = row.admission.signal;
+    final sender = ringing ? _ringingReplySender : _declineReplySender;
+    return sender != null && signal != null
+        ? () => sender(signal, callHandle)
+        : null;
+  }
+
+  static _AuthenticatedMailboxRow? _matchingTerminal(
+    List<_AuthenticatedMailboxRow> rows,
+    List<_AuthenticatedMailboxRow> invites, {
+    bool allowV1 = true,
+  }) {
+    _AuthenticatedMailboxRow? match;
+    for (final row in rows) {
+      if (!allowV1 && row.admission.v2Admission == null) continue;
+      final event = row.admission.event;
+      final isTerminal =
+          event == CallSignalType.reject || event == CallSignalType.terminate;
+      if (isTerminal && invites.every((invite) => _sameCall(row, invite))) {
+        if (row.admission.wireSignal != null) return row;
+        match ??= row;
+      }
+    }
+    return match;
+  }
+
+  static bool _sameCall(
+    _AuthenticatedMailboxRow a,
+    _AuthenticatedMailboxRow b,
+  ) {
+    final aV2 = a.admission.v2Admission;
+    final bV2 = b.admission.v2Admission;
+    if (aV2 == null && bV2 == null) return true;
+    // Match the foreground mailbox's authenticated schema, handle, call ID,
+    // and participant binding when a V2 row is present.
+    if (aV2 == null || bV2 == null) return false;
+    final first = aV2.signal;
+    final second = bV2.signal;
+    return aV2.callHandle == bV2.callHandle &&
+        first.callId == second.callId &&
+        first.senderAccountPeerId == second.senderAccountPeerId &&
+        first.senderDevicePeerId == second.senderDevicePeerId &&
+        first.recipientAccountPeerId == second.recipientAccountPeerId &&
+        first.recipientDevicePeerId == second.recipientDevicePeerId;
   }
 
   static void _emitDeclineReplyResult(String outcome) {
@@ -584,9 +750,13 @@ final class MailboxProductionHeadlessCallAdmissionSession
   /// relay and never changes the terminal verdict the native side acts on.
   Future<void> _acknowledgeEndedCall(
     String callHandle,
-    List<String> messageIds,
+    List<_AuthenticatedMailboxRow> rows,
+    _AuthenticatedMailboxRow ended,
   ) async {
-    if (messageIds.isEmpty) return;
+    final messageIds = <String>[
+      for (final row in rows)
+        if (_sameCall(row, ended)) row.event.messageId,
+    ];
     try {
       await _mailboxClient.ack(callHandle: callHandle, messageIds: messageIds);
     } catch (_) {
@@ -904,9 +1074,12 @@ final class AndroidProductionHeadlessCallAdmissionBackend
     }
 
     int nowMs() => DateTime.now().toUtc().millisecondsSinceEpoch;
+    final videoEnabled =
+        productionVoiceCallFeatureFlags()['video_call_v2_enabled'] == true;
     final codec = SecureCallEnvelopeCodec(
       crypto: BridgeCallEnvelopeCrypto(bridge: bridge),
       nowMs: nowMs,
+      videoEnabled: videoEnabled,
     );
     final roster = DatabaseCallTrustedRosterProvider(database);
     final mailbox = BridgeCallMailboxClient(bridge: bridge);
@@ -922,6 +1095,29 @@ final class AndroidProductionHeadlessCallAdmissionBackend
     final receivedWakeHandles = ReceivedCallWakeHandleStoreImpl(
       secureKeyStore: _secureKeyStore,
     );
+    Future<ResolvedCallEndpoint> resolveEndpoint(String contactAccountPeerId) =>
+        resolveProductionCallEndpoint(
+          contactAccountPeerId: contactAccountPeerId,
+          resolver: resolver,
+          rosterProvider: roster,
+          authorityClient: authority,
+          receivedCallWakeHandleStore: receivedWakeHandles,
+        );
+
+    Future<bool> isNativeRinging(String callHandle, int expiresAtMs) async {
+      if (invocation.mode != HeadlessCallAdmissionMode.ringingReply ||
+          invocation.callId != callHandle ||
+          invocation.expiresAtMs != expiresAtMs) {
+        return false;
+      }
+      return await const MethodChannel(
+            'mknoon/headless_call_admission',
+          ).invokeMethod<bool>('isRinging', invocation.identityPayload()) ??
+          false;
+    }
+
+    Future<String> loadSigningPrivateKey() async => identity.privateKey;
+
     // 406/408: a killed-app call never reaches CallCoordinator, so this
     // isolate is the only place its row can be written AND the only place its
     // missed-call card can be posted. Without both, the case where the user
@@ -979,70 +1175,71 @@ final class AndroidProductionHeadlessCallAdmissionBackend
     );
     final declineReply = HeadlessCallDeclineReplyTransmitter(
       transmit: signalingService.transmit,
-      resolveEndpoint: (contactAccountPeerId) => resolveProductionCallEndpoint(
-        contactAccountPeerId: contactAccountPeerId,
-        resolver: resolver,
-        rosterProvider: roster,
-        authorityClient: authority,
-        receivedCallWakeHandleStore: receivedWakeHandles,
-      ),
+      resolveEndpoint: resolveEndpoint,
       localAccountPeerId: identity.peerId,
       localDevicePeerId: physicalPeerId,
-      loadSigningPrivateKey: () async => identity.privateKey,
+      loadSigningPrivateKey: loadSigningPrivateKey,
       nowMs: nowMs,
     );
     final ringingReply = HeadlessCallRingingReplyTransmitter(
       transmit: signalingService.transmit,
-      resolveEndpoint: (contactAccountPeerId) => resolveProductionCallEndpoint(
-        contactAccountPeerId: contactAccountPeerId,
-        resolver: resolver,
-        rosterProvider: roster,
-        authorityClient: authority,
-        receivedCallWakeHandleStore: receivedWakeHandles,
-      ),
-      isNativeRinging: (callHandle, expiresAtMs) async {
-        if (invocation.mode != HeadlessCallAdmissionMode.ringingReply ||
-            invocation.callId != callHandle ||
-            invocation.expiresAtMs != expiresAtMs) {
-          return false;
-        }
-        return await const MethodChannel(
-              'mknoon/headless_call_admission',
-            ).invokeMethod<bool>('isRinging', invocation.identityPayload()) ??
-            false;
-      },
+      resolveEndpoint: resolveEndpoint,
+      isNativeRinging: isNativeRinging,
       localAccountPeerId: identity.peerId,
       localDevicePeerId: physicalPeerId,
-      loadSigningPrivateKey: () async => identity.privateKey,
+      loadSigningPrivateKey: loadSigningPrivateKey,
       nowMs: nowMs,
     );
-    final admission = IncomingCallPrePresentationAdmission(
-      codec: codec,
-      trustedRosterProvider: roster,
-      localAuthorityProvider: () async => CallLocalDeviceAuthority(
-        accountPeerId: identity.peerId,
-        devicePeerId: physicalPeerId,
-        mlKemSecretKey: identity.mlKemSecretKey!,
-      ),
-    );
+    final v2Reply = videoEnabled
+        ? HeadlessCallV2ReplyTransmitter(
+            signalingService: signalingService,
+            resolveEndpoint: resolveEndpoint,
+            isNativeRinging: isNativeRinging,
+            localAccountPeerId: identity.peerId,
+            localDevicePeerId: physicalPeerId,
+            loadSigningPrivateKey: loadSigningPrivateKey,
+            nowMs: nowMs,
+          )
+        : null;
     final session = MailboxProductionHeadlessCallAdmissionSession(
       mailboxClient: mailbox,
-      authenticateEvent: ({required invocation, required event}) async {
-        final authenticated = await admission.authenticateMailboxEvent(
-          nativeCallId: invocation.callId,
-          wakeExpiresAtMs: invocation.expiresAtMs,
-          event: event,
-        );
-        return HeadlessAuthenticatedMailboxEvent(
-          event: authenticated.signal.event,
-          rollbackReplay: authenticated.rollbackReplay,
-          signal: authenticated.signal,
-        );
-      },
+      authenticateEvent: createProductionHeadlessMailboxAuthenticator(
+        codec: codec,
+        roster: roster,
+        localAuthorityProvider: () async => CallLocalDeviceAuthority(
+          accountPeerId: identity.peerId,
+          devicePeerId: physicalPeerId,
+          mlKemSecretKey: identity.mlKemSecretKey!,
+        ),
+        videoEnabled: videoEnabled,
+        resolveV2Endpoint: videoEnabled ? resolveEndpoint : null,
+        nowMs: nowMs,
+      ),
       declineReplySender: (invite, callHandle) =>
           declineReply.sendDeclineFor(invite, callHandle: callHandle),
       ringingReplySender: (invite, callHandle) =>
           ringingReply.sendRingingFor(invite, callHandle: callHandle),
+      presentationFailureReplySender: (invite, callHandle) =>
+          declineReply.sendPresentationFailureFor(
+            invite,
+            callHandle: callHandle,
+            isAuthorized: () async {
+              if (invocation.mode !=
+                      HeadlessCallAdmissionMode.presentationFailureReply ||
+                  invocation.callId != callHandle ||
+                  invocation.expiresAtMs != invite.expiresAtMs) {
+                return false;
+              }
+              return await const MethodChannel('mknoon/headless_call_admission')
+                      .invokeMethod<bool>(
+                        'isPresentationFailure',
+                        invocation.identityPayload(),
+                      ) ??
+                  false;
+            },
+          ),
+      declineV2ReplySender: v2Reply?.sendDeclineFor,
+      ringingV2ReplySender: v2Reply?.sendRingingFor,
       historyRecorder: recordTerminalCallHistory,
       resolveDisplay: (invite) async {
         // These are local reads under the same authenticated DB owner. Start

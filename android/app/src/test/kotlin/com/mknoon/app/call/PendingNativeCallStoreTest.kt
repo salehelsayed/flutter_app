@@ -1,5 +1,6 @@
 package com.mknoon.app.call
 
+import java.util.Base64
 import java.util.UUID
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -9,6 +10,66 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PendingNativeCallStoreTest {
+    @Test
+    fun `fresh native runtime presents a new call after the old ringing owner dies`() {
+        val backend = InMemoryPendingNativeCallBackend()
+        val firstPlatform = LifecycleFakePlatform(mutableListOf())
+        val first = lifecycle(store(backend), firstPlatform)
+        assertEquals(MknoonCallPresentationResult.PRESENTED, first.present(payloadA()))
+        assertEquals(1, firstPlatform.showIncomingCalls)
+
+        val nextPlatform = LifecycleFakePlatform(mutableListOf())
+        val restarted = lifecycle(store(backend), nextPlatform)
+        assertEquals(MknoonCallPresentationResult.PRESENTED, restarted.present(payloadB()))
+        assertEquals(NATIVE_CALL_ID_B, restarted.activeNativeCallId())
+        assertEquals(1, nextPlatform.registerCalls)
+        assertEquals(1, nextPlatform.showIncomingCalls)
+        assertEquals(MknoonCallPresentationResult.DUPLICATE, restarted.present(payloadA()))
+        assertFalse(restarted.reconcilePresented(NATIVE_CALL_ID_A))
+        assertEquals(NATIVE_CALL_ID_B, restarted.activeNativeCallId())
+        assertEquals(1, nextPlatform.registerCalls)
+    }
+
+    @Test
+    fun `cold adopted terminal is replayable without occupying the native call slot`() {
+        val backend = InMemoryPendingNativeCallBackend()
+        val first = lifecycle(store(backend), LifecycleFakePlatform(mutableListOf()))
+        assertEquals(MknoonCallPresentationResult.PRESENTED, first.present(payloadA()))
+        assertNotNull(first.attach())
+        assertTrue(first.answer(NATIVE_CALL_ID_A))
+        assertTrue(first.markAdopted(NATIVE_CALL_ID_A))
+        assertTrue(first.acknowledge(
+            NATIVE_CALL_ID_A,
+            requireNotNull(first.snapshot()).highestSequence,
+            PendingNativeCallAcknowledgement.ADOPTED,
+        ))
+
+        val restarted = lifecycle(store(backend), LifecycleFakePlatform(mutableListOf()))
+        assertTrue(restarted.reconcileAdoptedJournal())
+        val terminal = requireNotNull(restarted.snapshot())
+        assertEquals(PendingNativeCallEventType.PROVIDER_REMOVED, terminal.terminalEvent?.type)
+        assertEquals(MknoonCallPresentationResult.PRESENTED, restarted.present(payloadB()))
+        assertTrue(restarted.acknowledge(
+            NATIVE_CALL_ID_A,
+            terminal.highestSequence,
+            PendingNativeCallAcknowledgement.TERMINAL,
+        ))
+        assertEquals(NATIVE_CALL_ID_B, restarted.activeNativeCallId())
+    }
+
+    @Test
+    fun `live ringing owner keeps its call when another invite arrives`() {
+        val platform = LifecycleFakePlatform(mutableListOf())
+        val controller = lifecycle(store(InMemoryPendingNativeCallBackend()), platform)
+
+        assertEquals(MknoonCallPresentationResult.PRESENTED, controller.present(payloadA()))
+        assertEquals(MknoonCallPresentationResult.BUSY, controller.present(payloadB()))
+        assertEquals(MknoonCallPresentationResult.DUPLICATE, controller.present(payloadA()))
+        assertEquals(NATIVE_CALL_ID_A, controller.activeNativeCallId())
+        assertEquals(1, platform.registerCalls)
+        assertEquals(1, platform.showIncomingCalls)
+    }
+
     @Test
     fun `observation leaves AtomicFile sidecars untouched and refuses ambiguous or oversized bytes`() {
         val folder = kotlin.io.path.createTempDirectory("journal-observation").toFile()
@@ -82,6 +143,23 @@ class PendingNativeCallStoreTest {
         repeat(2) { assertNull(callStore.observeProtectedJournal()) }
         assertTrue("Observer pruned durable receipt", receipt.contentEquals(backend.committedReceiptBytes()))
         assertEquals(before, backend.replaceCalls)
+    }
+
+    @Test
+    fun `version four journal uses its persisted expiry for both deadlines`() {
+        val versionFourRecord = Base64.getDecoder().decode(
+            "TUtOQwAAAAQAESIzRFVmd4iZqrvM3e7/AAAAJDAwMTEyMjMzLTQ0NTUtNjY3Ny04ODk5LWFhYmJj" +
+                "Y2RkZWVmZgAAACA1MDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZgAAAaMYXFAAAAABoxhc" +
+                "/8gAAAAAAAAAAAAAAAROT05FAAAACVBSRV9TVEFSVAAAAAhJTkNPTUlORwAAAAAAAAAAAAAAAAAA" +
+                "AAAAAAAAAAAAAAA=",
+        )
+        val store = store(InMemoryPendingNativeCallBackend(versionFourRecord))
+        val descriptor = requireNotNull(store.snapshot())
+        assertEquals(NATIVE_CALL_ID_A, descriptor.nativeCallId)
+        assertEquals(NOW_MS + 45_000L, descriptor.expiresAtMs)
+        assertEquals(descriptor.expiresAtMs, descriptor.wireExpiresAtMs)
+        assertNull(descriptor.authenticatedExpiresAtMs)
+        assertEquals(descriptor, duplicate(store.create(payloadA())).descriptor)
     }
 
     @Test
@@ -687,6 +765,18 @@ class PendingNativeCallStoreTest {
         )
         assertEquals(0, readFailure.replaceCalls)
     }
+
+    private fun lifecycle(
+        store: PendingNativeCallStore,
+        platform: LifecycleFakePlatform,
+    ) = MknoonCallLifecycleController(
+        store = store,
+        platform = platform,
+        eventSink = LifecycleFakeEventSink(mutableListOf()),
+        capabilityEnabled = { true },
+        recordAudioPermissionGranted = { true },
+        nowMs = { NOW_MS },
+    )
 
     private fun store(
         backend: PendingNativeCallBackend,

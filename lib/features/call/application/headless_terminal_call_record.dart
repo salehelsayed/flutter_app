@@ -2,8 +2,8 @@ import '../data/call_history_repository.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_media.dart';
 import '../domain/call_session_snapshot.dart';
-import '../domain/call_signal.dart';
 import '../domain/call_state.dart';
+import '../domain/call_wire_signal.dart';
 import 'call_history_projector.dart';
 import 'missed_call_notifier.dart';
 
@@ -22,9 +22,9 @@ Future<void> recordHeadlessTerminalCall({
   required CallHistoryRepository repository,
   required CallHistoryProjector projector,
   required MissedCallNotifier notifier,
-  required CallSignal terminal,
+  required CallWireSignal terminal,
   required CallEndReason reason,
-  CallSignal? invite,
+  CallWireSignal? invite,
 }) async {
   final startedAtMs = invite?.createdAtMs ?? terminal.createdAtMs;
   // Clock skew between the two devices can put the terminate before the

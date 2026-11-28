@@ -53,3 +53,10 @@ internal fun formatMknoonCallAdmissionEvent(
     event: MknoonCallAdmissionEvent,
     mode: MknoonCallForegroundMode?,
 ): String = "CALL_ANDROID_ADMISSION event=${event.wireValue} mode=${mode?.wireValue ?: "idle"}"
+
+internal fun logHeadlessCallPresentation(result: MknoonCallPresentationResult?) {
+    android.util.Log.i(
+        MKNOON_CALL_ADMISSION_TAG,
+        "CALL_ANDROID_ADMISSION_PRESENTATION result=${result?.name ?: "EXCEPTION"}",
+    )
+}

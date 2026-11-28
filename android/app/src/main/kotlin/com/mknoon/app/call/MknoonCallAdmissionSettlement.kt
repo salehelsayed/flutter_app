@@ -58,7 +58,9 @@ internal class MknoonCallAdmissionSettlementStore(
         var declined: Boolean = false,
         var blocked: Boolean = false,
         var settled: Boolean = false,
-    )
+    ) {
+        val capturable: Boolean get() = !declined && !blocked && !settled
+    }
     private val entries = LinkedHashMap<UUID, Entry>()
 
     init { require(capacity in 1..32) }
@@ -86,7 +88,17 @@ internal class MknoonCallAdmissionSettlementStore(
 
     @Synchronized fun capture(nativeCallId: UUID): MknoonCallAdmissionToken? {
         val entry = current(nativeCallId) ?: return null
-        return entry.token.takeUnless { entry.declined || entry.blocked || entry.settled }
+        return entry.token.takeIf { entry.capturable }
+    }
+
+    @Synchronized fun canTransferAdmission(
+        previous: MknoonCallAdmissionToken,
+        incoming: MknoonCallAdmissionToken,
+    ): Boolean {
+        val now = clock() ?: return false
+        return now < incoming.expiresAtMs &&
+            current(previous.nativeCallId, now)?.takeIf { it.capturable }?.token == previous &&
+            current(incoming.nativeCallId, now)?.takeIf { it.capturable }?.token == incoming
     }
 
     @Synchronized fun settle(token: MknoonCallAdmissionToken, commit: () -> Boolean = { true }): Boolean {
@@ -123,6 +135,10 @@ internal class MknoonCallAdmissionSettlementStore(
 
     private fun current(nativeCallId: UUID): Entry? {
         val now = clock() ?: return null
+        return current(nativeCallId, now)
+    }
+
+    private fun current(nativeCallId: UUID, now: Long): Entry? {
         prune(now)
         return entries[nativeCallId]?.takeIf { now >= it.registeredAtMs }
     }

@@ -136,6 +136,54 @@ void main() {
     },
   );
 
+  test(
+    'failure sends signaling_failed only with fresh native authority',
+    () async {
+      final invite = _invite();
+      final order = <String>[];
+      await expectLater(
+        transmitter
+            .sendPresentationFailureFor(
+              invite,
+              callHandle: _mailboxHandle,
+              isAuthorized: () async {
+                expect(resolved, <String>['caller-account']);
+                order.add('authority denied');
+                return false;
+              },
+            )
+            .timeout(const Duration(seconds: 2)),
+        completion(isFalse),
+      );
+      expect(transmitted, isEmpty);
+
+      await expectLater(
+        transmitter
+            .sendPresentationFailureFor(
+              invite,
+              callHandle: _mailboxHandle,
+              isAuthorized: () async {
+                order.add('authority confirmed');
+                return true;
+              },
+            )
+            .timeout(const Duration(seconds: 2)),
+        completion(isTrue),
+      );
+      expect(order, <String>['authority denied', 'authority confirmed']);
+      final sent = transmitted.single;
+      expect(sent.callHandle, _mailboxHandle);
+      expect(sent.endpoint.devicePeerId, invite.senderDevicePeerId);
+      expect(sent.signal.event, CallSignalType.reject);
+      expect(sent.signal.callId, invite.callId);
+      expect(sent.signal.iceGeneration, invite.iceGeneration);
+      expect(sent.signal.senderSequence, 2);
+      expect(sent.signal.payload, const <String, Object?>{
+        'reason': 'signaling_failed',
+      });
+    },
+  );
+
   test('caller admits headless ringing followed by headless decline', () async {
     final ringing = HeadlessCallRingingReplyTransmitter(
       transmit:
