@@ -754,6 +754,7 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _coalesceInsertedMessage = false;
   bool _coalesceWantsMarkRead = false;
   bool _coalesceWantsIntroCheck = false;
+  final _callButtonKey = GlobalKey();
   bool _outgoingCallStartInFlight = false;
   bool _outgoingCallIsVideo = false;
   // A null result means this contact's video eligibility is unknown.
@@ -9085,32 +9086,51 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
 
-    if (!mounted) return;
+    if (!mounted || !sameConversation()) return;
+    final overlay = Navigator.of(context).overlay?.context.findRenderObject();
+    RelativeRect? menuPosition() {
+      final button = _callButtonKey.currentContext?.findRenderObject();
+      if (button is! RenderBox ||
+          !button.attached ||
+          !button.hasSize ||
+          overlay is! RenderBox ||
+          !overlay.attached ||
+          !overlay.hasSize) {
+        return null;
+      }
+      final anchor = Rect.fromPoints(
+        button.localToGlobal(
+          button.size.bottomLeft(Offset.zero),
+          ancestor: overlay,
+        ),
+        button.localToGlobal(
+          button.size.bottomRight(Offset.zero),
+          ancestor: overlay,
+        ),
+      );
+      if (!anchor.isFinite) return null;
+      return RelativeRect.fromSize(anchor, overlay.size);
+    }
+
+    final initialPosition = menuPosition();
+    if (initialPosition == null) return;
     final l10n = AppLocalizations.of(context)!;
-    final selection = await showDialog<CallMediaKind>(
+    final selection = await showMenu<CallMediaKind>(
       context: context,
       useRootNavigator: false,
-      builder: (dialogContext) {
-        final dialogRoute = ModalRoute.of(dialogContext);
-        void select(CallMediaKind media) {
-          if (dialogRoute != null && dialogRoute.isCurrent) {
-            dialogRoute.navigator?.pop(media);
-          }
-        }
-
-        return SimpleDialog(
-          children: [
-            SimpleDialogOption(
-              onPressed: () => select(CallMediaKind.audio),
-              child: Text(l10n.call_row_voice_call),
-            ),
-            SimpleDialogOption(
-              onPressed: () => select(CallMediaKind.video),
-              child: Text(l10n.call_video_status_video),
-            ),
-          ],
-        );
-      },
+      positionBuilder: (_, _) => menuPosition() ?? initialPosition,
+      items: [
+        PopupMenuItem(
+          value: CallMediaKind.audio,
+          height: 44,
+          child: Text(l10n.call_row_voice_call),
+        ),
+        PopupMenuItem(
+          value: CallMediaKind.video,
+          height: 44,
+          child: Text(l10n.call_video_status_video),
+        ),
+      ],
     );
     if (!mounted || selection == null || !sameConversation()) return;
     await _startOutgoingCall(
@@ -10063,6 +10083,7 @@ class _ConversationWiredState extends State<ConversationWired>
               BackgroundPreference.defaultBackground,
           highlightedMessageId: _highlightedMessageId,
           search: _search,
+          callButtonKey: _callButtonKey,
         ),
       ),
     );

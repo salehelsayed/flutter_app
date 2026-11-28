@@ -317,6 +317,7 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback? onAvatarTap;
   final VoidCallback? onCall;
   final VoidCallback? onCallRetry;
+  final Key? callButtonKey;
 
   /// "Call back" on one call row. Null hides the row button: the header call
   /// never stands in for it, because a missed incoming row must first prove it
@@ -463,6 +464,7 @@ class ConversationScreen extends StatefulWidget {
     this.onAvatarTap,
     this.onCall,
     this.onCallRetry,
+    this.callButtonKey,
     this.onCallBack,
     this.showCallAction = false,
     this.callActionEnabled = false,
@@ -1010,6 +1012,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                       : null,
                   onCall: widget.onCall,
                   onCallRetry: widget.onCallRetry,
+                  callButtonKey: widget.callButtonKey,
                   onSearch: widget.search?.open,
                   introPromoAction: showCompactIntro
                       ? _buildCompactIntroPromo(context)
