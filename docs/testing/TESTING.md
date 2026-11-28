@@ -11668,19 +11668,27 @@ visible and cannot become an ordinary first-attempt PASS.
   explicit-base local selection includes unrelated dirty-tree checks left
   NOT RUN; see `.codex-test-logs/r29-w3-startup-20260929/` and the R2-9
   handoff for first-attempt and follow-up artifacts.
-  On 2026-11-28, the same isolated iPhone 13 and Android emulator pair ran
+  On 2026-11-28, an isolated iPhone 13 and Android emulator pair ran
   release-mode Android controls on `e4c3387b`. With the tester V2 flags on,
   the background control rang and both killed-process attempts timed out
   before native presentation. With V2 off, both killed-process attempts rang.
   Check the effective build defines for both peers. The iOS 134 archive used
   V2 tester flags, and the same define file built Android 235.
-  The combined call candidate `b24001f9` rang in both V2-on killed-process
-  repeats, after a rapid cancel and after the callee process died mid-ring.
+  The combined call candidate `b24001f9c` rang in both V2-on killed-process
+  repeats and after a rapid cancel. BL-111/112 distinguishes notification
+  denial from a stale call owner. In the matched Android process-death check,
+  the old call must reach Telecom RINGING, then disconnect when its callee
+  process dies. Verify the successor's own native ringing and caller
+  `remoteRinging` after the cold callee starts. Tester release APK 400
+  (SHA-256 beginning `95c69172`), a Pixel 8 API 37 emulator, and iPhone 13 dev
+  399 on Hetzner passed this sequence with Android notification permission
+  still denied and V2 enabled.
   An early native Decline reached the caller in about 2.7 seconds. Preserve
   the first cold-boot background call that showed caller Ringing after about
   26 seconds and the first near-deadline Decline that ended as no answer.
   The device evidence is in `.codex-test-logs/b7r-20261127/`
-  (`logcat/f_proof.txt`, `ios13/f_fix.txt`; receipt `m-2449282c`).
+  (`logcat/f_proof.txt`, `ios13/f_fix.txt`) and Flutter receipts `m-2449282c`
+  and `m-b351a218`. Latency on this pair stays observational.
   The exact 727-case Android host gate also preserves the original signed
   53.4-second deadline through a 45-second native alert and verifies that
   a cleanly quiesced admission can yield to a fresh wake while live owners
