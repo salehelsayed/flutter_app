@@ -59,6 +59,25 @@
       "declaredException": false
     },
     {
+      "id": "android.e2e.production_call_killed_callee",
+      "platform": "android",
+      "artifactKind": "provider-configured-debug-apk",
+      "buildRequired": true,
+      "compileDefines": {
+        "E2E_TEST_MODE": "true",
+        "VOICE_CALL_CAPABILITY_V1": "true",
+        "VOICE_CALL_OUTGOING_ENABLED": "true",
+        "VOICE_CALL_INCOMING_ENABLED": "true",
+        "VOICE_CALL_TURN_ENABLED": "true",
+        "VOICE_CALL_ANDROID_NATIVE_ENABLED": "true",
+        "VOICE_CALL_ALWAYS_RELAY_ENABLED": "true",
+        "VOICE_CALL_FORCE_RELAY_ENABLED": "true",
+        "VIDEO_CALL_V2_ENABLED": "true",
+        "PRODUCTION_FCM": "true"
+      },
+      "declaredException": false
+    },
+    {
       "id": "android.e2e.production_call_preference",
       "platform": "android",
       "artifactKind": "universal-debug-apk",
@@ -2711,6 +2730,47 @@
       "declaredBuildException": false
     },
     {
+      "id": "build.android.e2e.production_call_killed_callee",
+      "owner": "sims-build-cache",
+      "proofBoundary": "build.android.e2e.production-call-killed-callee.attested",
+      "assertions": [
+        "build.provider_profile_attested",
+        "build.production_call_v2_options_attested"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "transport",
+        "media"
+      ],
+      "required": true,
+      "command": [
+        "@prepare-build",
+        "android.e2e.production_call_killed_callee"
+      ],
+      "buildProfile": "android.e2e.production_call_killed_callee",
+      "dependencies": [],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_killed_callee",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "host.android-sdk",
+        "credentials.fcm"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "sha256-provider-attestation",
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
       "id": "build.android.e2e.production_call_preference",
       "owner": "sims-build-cache",
       "proofBoundary": "build.android.e2e.production-call-preference.attested",
@@ -2834,6 +2894,85 @@
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
       "artifactValidator": "validateAndroidProductionAudioCallArtifact",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "android.production_call_killed_callee_rings",
+      "owner": "call",
+      "proofBoundary": "android.two-peer.production-call-killed-callee",
+      "assertions": [
+        "call_admission.v2_fcm_artifact_on_pinned_android_pair",
+        "call_admission.killed_callee_native_and_authenticated_ringing",
+        "call_admission.successor_rings_after_rapid_cancellation",
+        "call_admission.successor_rings_after_callee_dies_mid_ring",
+        "call_admission.owned_fixture_state_restored"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_1to1_device_real.dart",
+        "--scenario",
+        "android.production_call_killed_callee_rings"
+      ],
+      "buildProfile": "android.e2e.production_call_killed_callee",
+      "dependencies": [
+        "build.android.e2e.production_call_killed_callee"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_killed_callee",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-call-killed-callee",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable",
+        "credentials.fcm"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateAndroidProductionCallKilledCalleeArtifact",
       "automationReady": true,
       "active": true,
       "declaredBuildException": false

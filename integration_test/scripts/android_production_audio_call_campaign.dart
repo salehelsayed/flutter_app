@@ -13,8 +13,11 @@ import '../../tool/sims/capture_budget.dart';
 import '../../tool/sims/production_call_back_criteria.dart';
 import '../../tool/sims/production_call_regression_criteria.dart';
 import 'package:flutter_app/debug/production_journeys/sims_runtime_protocol.dart';
+
 import '../support/android_app_state_guard.dart';
+import '../support/android_campaign_evidence_validation.dart';
 import '../support/android_production_audio_call_evidence.dart';
+import '../support/production_android_artifact.dart';
 import '../support/production_android_journey.dart';
 import '../support/production_call_in_app_identity.dart';
 import '../support/production_journey_peer.dart';
@@ -29,6 +32,7 @@ import 'reaction_notification_proof_support.dart'
 
 part 'production_call_back_regressions.dart';
 part 'production_call_surface_regressions.dart';
+part 'production_killed_callee_campaign.dart';
 
 const String _fixtureIdentityEnvironment =
     'MKNOON_DIRECT_MEDIA_CUSTODY_FIXTURE_IDENTITY_SHA256';
@@ -1254,11 +1258,21 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     Duration startDispatchPollInterval = const Duration(milliseconds: 250),
     DateTime Function()? now,
     String? regressionScenario,
+    bool killedCallee = false,
   }) : _runner = runner,
        _now = now ?? DateTime.now,
        _startDispatchMaximumPolls = startDispatchMaximumPolls,
        _startDispatchPollInterval = startDispatchPollInterval {
-    validateAndroidProductionAudioCallAppPackage(packageName);
+    if (killedCallee) {
+      if (packageName != androidProductionKilledCalleeAppPackage ||
+          regressionScenario != null) {
+        throw const FormatException(
+          'Killed-callee fixture package is invalid.',
+        );
+      }
+    } else {
+      validateAndroidProductionAudioCallAppPackage(packageName);
+    }
     if (regressionScenario != null) {
       if (!productionCallJourneys.contains(regressionScenario)) {
         throw const FormatException(
@@ -2360,25 +2374,23 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     return capture;
   }
 
-  Future<String> _readUiDump(String deviceId) async {
+  Future<String> _readUiDump(
+    String deviceId, {
+    Duration? commandTimeout,
+  }) async {
     final remote = '/data/local/tmp/plan399-${_token('ui')}.xml';
+    Future<ProcessResult> adb(List<String> arguments) {
+      final command = <String>['-s', deviceId, ...arguments];
+      final bound = commandTimeout;
+      return bound == null
+          ? _run('adb', command, allowFailure: true)
+          : _runWithTimeout('adb', command, timeout: bound, allowFailure: true);
+    }
+
     try {
-      final dump = await _adbShell(deviceId, <String>[
-        'uiautomator',
-        'dump',
-        remote,
-      ], allowFailure: true);
-      if (!dump.contains('dumped to') && !dump.contains('UI hierchary')) {
-        // Some Android releases write the success marker to stderr; the cat
-        // below remains the authoritative check.
-      }
-      final result = await _run('adb', <String>[
-        '-s',
-        deviceId,
-        'exec-out',
-        'cat',
-        remote,
-      ], allowFailure: true);
+      await adb(['shell', 'uiautomator', 'dump', remote]);
+      // The complete hierarchy is authoritative if the success marker went to stderr.
+      final result = await adb(['exec-out', 'cat', remote]);
       final xml = '${result.stdout}';
       final hierarchy = xml.trim().replaceFirst(
         RegExp(r'^<\?xml[^>]*\?>\s*'),
@@ -2398,11 +2410,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
       }
       return xml;
     } finally {
-      await _adbShell(deviceId, <String>[
-        'rm',
-        '-f',
-        remote,
-      ], allowFailure: true);
+      await adb(['shell', 'rm', '-f', remote]);
     }
   }
 

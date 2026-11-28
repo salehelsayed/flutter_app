@@ -285,6 +285,7 @@ final class ProductionAudioCallLocalFixtureLease {
       final readiness = validateProductionAudioCallLocalFixtureReadiness(
         payload,
         expectedHost: hostIp,
+        requireRealFcm: environment['PLAN399_CALL_FCM_ENABLED'] == '1',
       );
       await _requirePrivateRegularFile(readiness.oracleCredentialsFile);
       if (await File(readiness.oracleResultFile).exists()) {
@@ -572,8 +573,9 @@ _ProductionAudioCallFixtureReadiness
 validateProductionAudioCallLocalFixtureReadiness(
   Map<String, Object?> payload, {
   required String expectedHost,
+  bool requireRealFcm = false,
 }) {
-  _requireExactKeys(payload, const <String>{
+  _requireExactKeys(payload, <String>{
     'schema',
     'multiaddr',
     'probeUrl',
@@ -595,6 +597,7 @@ validateProductionAudioCallLocalFixtureReadiness(
     'coturnContainerIdentitySha256',
     'oracleCredentialsFile',
     'oracleResultFile',
+    if (requireRealFcm) 'realFcmConfigured',
   });
   final multiaddr = payload['multiaddr'];
   final probeUrl = payload['probeUrl'];
@@ -614,6 +617,7 @@ validateProductionAudioCallLocalFixtureReadiness(
       payload['ephemeral'] != true ||
       payload['ackCustodyAdmissionEnabled'] != true ||
       payload['mediaCustodyAdmissionEnabled'] != true ||
+      (requireRealFcm && payload['realFcmConfigured'] != true) ||
       multiaddr is! String ||
       probeUrl is! String ||
       fixtureIdentity is! String ||

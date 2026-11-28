@@ -26,6 +26,7 @@
     "device-notifications-ios",
     "device-group-mute",
     "device-audio",
+    "device-call-admission",
     "signed-startup-contacts",
     "signed-chat-group-media",
     "signed-notifications",
@@ -1021,6 +1022,36 @@
         "kx0030"
       ]
     },
+    "device-call-admission": {
+      "kind": "sims",
+      "capability": "android.production_call_killed_callee_rings",
+      "boundary": "android.two-peer.production-call-killed-callee",
+      "timeout_seconds": 3600,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json",
+        "integration_test/scripts/run_production_audio_call_sims.dart"
+      ],
+      "investigate": [
+        "call"
+      ],
+      "limitations": "V2-on disposable debug source build with real test FCM; signed-candidate device evidence remains separate.",
+      "adapter": "integration_test/scripts/run_production_audio_call_sims.dart",
+      "disposable_android_package": "com.mknoon.sims.notifications",
+      "requires_firebase_android_client": true,
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing production audio driver owns the two-peer app state and UI actions. Extend its evidence to join verified callee PID death, held or released Telecom state and authenticated remote ringing. No UI-only assertion can establish the live native and process boundaries.",
+      "host_preflight": "notification-runner"
+    },
     "signed-startup-contacts": {
       "kind": "manual",
       "assertions": [
@@ -1376,6 +1407,8 @@
       "kind": "flutter",
       "paths": [
         "test/integration/android_production_audio_call_campaign_test.dart",
+        "test/integration/android_production_killed_callee_campaign_test.dart",
+        "test/integration/production_audio_call_local_fixture_test.dart",
         "test/integration/production_call_back_notification_step_test.dart",
         "test/integration/android_foreground_webrtc_audio_campaign_test.dart",
         "test/integration/android_foreground_webrtc_audio_readiness_diagnostic_test.dart",
@@ -1387,7 +1420,7 @@
         "test/integration/production_call_in_app_identity_test.dart"
       ],
       "boundary": "Local audio proof binds a disposable package across prepared APK, cache, app-owned controls and native activity launch; shared iOS cache identity includes native compilation conditions and preserves Release settings",
-      "limitations": "Host command and semantic UI fixtures preserve campaign safety; actual bidirectional audio and cleanup still require device-audio. This profile does not exercise FCM delivery.",
+      "limitations": "Host command and semantic UI fixtures preserve campaign safety. Bidirectional audio requires device-audio. Killed-callee FCM delivery and Telecom ringing require device-call-admission.",
       "timeout_seconds": 900,
       "estimated_seconds": null,
       "requirements": [
@@ -7535,6 +7568,22 @@
       "why": "Call regressions reuse the authenticated audio fixture and preserve actual callback/current-call, native notification/keyguard/permission observations and cleanup; host contracts do not certify a device run."
     },
     {
+      "id": "production-call-killed-callee",
+      "patterns": [
+        "integration_test/scripts/production_killed_callee_campaign.dart",
+        "integration_test/scripts/production_audio_call_local_fixture.dart",
+        "integration_test/scripts/run_production_audio_call_sims.dart",
+        "go-relay-server/production_audio_call_device_fixture_test.go",
+        "test/integration/android_production_killed_callee_campaign_test.dart"
+      ],
+      "checks": [
+        "production-audio-harness-contract",
+        "sims-plan-contract",
+        "device-call-admission"
+      ],
+      "why": "Keep cold-start process and Telecom evidence on the V2 FCM device row, with exact scenario and artifact contracts on host."
+    },
+    {
       "id": "production-audio-port-fixture",
       "patterns": [
         "go-relay-server/production_audio_call_device_fixture_test.go",
@@ -7743,6 +7792,7 @@
     "device-notifications-ios",
     "device-group-mute",
     "device-audio",
+    "device-call-admission",
     "signed-startup-contacts",
     "signed-chat-group-media",
     "signed-notifications",
@@ -7856,6 +7906,10 @@
         "--exclude",
         "build.android.e2e.production_call_local",
         "--exclude",
+        "android.production_call_killed_callee_rings",
+        "--exclude",
+        "build.android.e2e.production_call_killed_callee",
+        "--exclude",
         "build.android.production_fcm.fixed_wake",
         "--exclude",
         "notifications.android_recovery_completion",
@@ -7917,6 +7971,8 @@
         "android.production_1to1_audio_call",
         "build.android.e2e.direct_media_custody",
         "build.android.e2e.production_call_local",
+        "android.production_call_killed_callee_rings",
+        "build.android.e2e.production_call_killed_callee",
         "build.android.production_fcm.fixed_wake",
         "kx0001",
         "kx0002",
@@ -7953,6 +8009,47 @@
           }
         }
       }
+    },
+    {
+      "kind": "sims",
+      "capability": "android.production_call_killed_callee_rings",
+      "boundary": "android.two-peer.production-call-killed-callee",
+      "timeout_seconds": 3600,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json",
+        "integration_test/scripts/run_production_audio_call_sims.dart"
+      ],
+      "investigate": [
+        "call"
+      ],
+      "limitations": "V2-on disposable debug source build with real test FCM; signed-candidate device evidence remains separate.",
+      "adapter": "integration_test/scripts/run_production_audio_call_sims.dart",
+      "disposable_android_package": "com.mknoon.sims.notifications",
+      "requires_firebase_android_client": true,
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing production audio driver owns the two-peer app state and UI actions. Extend its evidence to join verified callee PID death, held or released Telecom state and authenticated remote ringing. No UI-only assertion can establish the live native and process boundaries.",
+      "host_preflight": "notification-runner",
+      "id": "full-device-call-admission",
+      "sims_mode": "major",
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_audio_call_sims.dart",
+        "--mode",
+        "major",
+        "--scenario",
+        "android.production_call_killed_callee_rings"
+      ]
     },
     {
       "kind": "sims",

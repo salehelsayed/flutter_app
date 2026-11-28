@@ -231,6 +231,7 @@ classify_path() {
       return
       ;;
     integration_test/scripts/android_production_audio_call_campaign.dart|\
+    integration_test/scripts/production_killed_callee_campaign.dart|\
     integration_test/scripts/production_audio_call_local_fixture.dart|\
     integration_test/support/android_production_audio_call_evidence.dart|\
     lib/core/debug/android_production_audio_call_e2e.dart)

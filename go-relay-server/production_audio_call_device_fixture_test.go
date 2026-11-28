@@ -77,6 +77,7 @@ type productionAudioCallFixtureReady struct {
 	CoturnContainerIdentitySHA256 string `json:"coturnContainerIdentitySha256"`
 	OracleCredentialsFile         string `json:"oracleCredentialsFile"`
 	OracleResultFile              string `json:"oracleResultFile"`
+	RealFCMConfigured             bool   `json:"realFcmConfigured,omitempty"`
 }
 
 type productionAudioCallOraclePeerCredential struct {
@@ -114,7 +115,7 @@ func TestProductionAudioCallDeviceFixture_ProductionRelayTurnCredentialsCoturnAn
 	}
 
 	hostIP := productionAudioCallFixtureTestHostIP(t)
-	fixture, err := startProductionAudioCallDeviceFixture(hostIP)
+	fixture, err := startProductionAudioCallDeviceFixture(hostIP, directMediaDeviceFixtureOptions{})
 	if err != nil {
 		t.Fatalf("start combined production audio-call fixture: %v", err)
 	}
@@ -135,7 +136,11 @@ func runProductionAudioCallFixtureProcess(t *testing.T) {
 	if !productionAudioCallPrivateLANIPv4(hostIP) {
 		t.Fatalf("%s must contain the adapter-selected private LAN IPv4 address", productionAudioCallFixtureHostIP)
 	}
-	fixture, err := startProductionAudioCallDeviceFixture(hostIP)
+	providerOptions, err := productionAudioCallFixtureProviderOptions(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := startProductionAudioCallDeviceFixture(hostIP, providerOptions)
 	if err != nil {
 		t.Fatalf("start combined production audio-call fixture: %v", err)
 	}
@@ -160,7 +165,42 @@ func runProductionAudioCallFixtureProcess(t *testing.T) {
 	}
 }
 
-func startProductionAudioCallDeviceFixture(hostIP string) (*productionAudioCallDeviceFixture, error) {
+func productionAudioCallFixtureProviderOptions(getenv func(string) string) (directMediaDeviceFixtureOptions, error) {
+	if getenv("PLAN399_CALL_FCM_ENABLED") != "1" {
+		return directMediaDeviceFixtureOptions{}, nil
+	}
+	credentialPath := getenv("SIMS_PROVIDER_FCM_CREDENTIAL_PATH")
+	if info, err := os.Stat(credentialPath); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return directMediaDeviceFixtureOptions{}, errors.New("cold call fixture requires a regular FCM service account")
+	}
+	return directMediaDeviceFixtureOptions{
+		fixedWakeRecovery:  true,
+		serviceAccountPath: credentialPath,
+	}, nil
+}
+
+func TestProductionAudioCallFixtureProviderIsExplicit(t *testing.T) {
+	env := map[string]string{
+		"SIMS_PROVIDER_FCM_CREDENTIAL_PATH": filepath.Join(t.TempDir(), "synthetic.json"),
+	}
+	getenv := func(name string) string { return env[name] }
+	if options, err := productionAudioCallFixtureProviderOptions(getenv); err != nil || options.fixedWakeRecovery {
+		t.Fatal("existing call fixture must ignore ambient FCM credentials")
+	}
+	env["PLAN399_CALL_FCM_ENABLED"] = "1"
+	if _, err := productionAudioCallFixtureProviderOptions(getenv); err == nil {
+		t.Fatal("cold-call fixture accepted an absent FCM credential")
+	}
+	if err := os.WriteFile(env["SIMS_PROVIDER_FCM_CREDENTIAL_PATH"], []byte("synthetic"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if options, err := productionAudioCallFixtureProviderOptions(getenv); err != nil ||
+		!options.fixedWakeRecovery || options.serviceAccountPath != env["SIMS_PROVIDER_FCM_CREDENTIAL_PATH"] {
+		t.Fatal("cold-call fixture did not select the existing provider path")
+	}
+}
+
+func startProductionAudioCallDeviceFixture(hostIP string, providerOptions directMediaDeviceFixtureOptions) (*productionAudioCallDeviceFixture, error) {
 	if !productionAudioCallPrivateLANIPv4(hostIP) {
 		return nil, errors.New("fixture host must be a private LAN IPv4 address")
 	}
@@ -250,12 +290,16 @@ func startProductionAudioCallDeviceFixture(hostIP string) (*productionAudioCallD
 	relay, err := startDirectMediaDeviceFixture(
 		root,
 		hostIP,
-		directMediaDeviceFixtureOptions{},
+		providerOptions,
 	)
 	if err != nil {
 		return fail(fmt.Errorf("start production relay fixture: %w", err))
 	}
 	fixture.relay = relay
+	realFCMConfigured := relay.ready.RealFCMConfigured && relay.stores.Push.client != nil
+	if providerOptions.fixedWakeRecovery && !realFCMConfigured {
+		return fail(errors.New("cold call fixture could not initialize the FCM provider"))
+	}
 
 	credentialsPath := filepath.Join(root, "oracle-credentials.json")
 	resultPath := filepath.Join(root, "oracle-result.json")
@@ -293,6 +337,7 @@ func startProductionAudioCallDeviceFixture(hostIP string) (*productionAudioCallD
 		CoturnContainerIdentitySHA256: containerIdentitySHA256,
 		OracleCredentialsFile:         credentialsPath,
 		OracleResultFile:              resultPath,
+		RealFCMConfigured:             realFCMConfigured,
 	}
 	return fixture, nil
 }
