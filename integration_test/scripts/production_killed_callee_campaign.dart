@@ -813,7 +813,7 @@ List<Map<String, Object?>> androidProductionKilledCalleeFlowRows(
     for (var i = start + 1; i < end; i++)
       if (flowLine.firstMatch(lines[i]) case final line?
           when line.group(1) == '$pid')
-        if (_projectKilledCalleeFlow(line.group(2)!) case final row?) row,
+        ?_projectKilledCalleeFlow(line.group(2)!),
   ];
 }
 
