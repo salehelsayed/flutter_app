@@ -171,7 +171,6 @@ class FriendPickerScreen extends StatelessWidget {
                   )
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemExtent: 60,
                     itemCount: filtered.length,
                     itemBuilder: (context, index) {
                       final friend = filtered[index];
@@ -238,10 +237,10 @@ class FriendPickerScreen extends StatelessWidget {
                 ],
                 SizedBox(
                   width: double.infinity,
-                  height: 44,
                   child: ElevatedButton(
                     onPressed: !isSending && selectionCount > 0 ? onSend : null,
                     style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(0, 44),
                       backgroundColor: accentColor,
                       foregroundColor: onAccentColor,
                       disabledBackgroundColor: readableColors.disabledSurface,
