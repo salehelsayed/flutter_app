@@ -311,52 +311,68 @@ class HeadlessCallAdmissionWorkerTest {
 
     @Test
     fun `every ordinary completion releases admission after engine cleanup`() = runBlocking {
-        val completions = HeadlessCallAdmissionDisposition.entries.map { disposition ->
-            validCompletionObject(identity()).copy(disposition = disposition)
+        val quiesced = HeadlessCallAdmissionRelease.QUIESCED_WITHOUT_PRESENTATION
+        val retain = HeadlessCallAdmissionRelease.REQUIRE_TERMINAL
+        val completions = mapOf(
+            HeadlessCallAdmissionDisposition.ADMITTED to retain,
+            HeadlessCallAdmissionDisposition.TERMINAL to HeadlessCallAdmissionRelease.SETTLED,
+            HeadlessCallAdmissionDisposition.PERMANENT_REJECT to quiesced,
+            HeadlessCallAdmissionDisposition.EMPTY_OR_ALREADY_ACKED to quiesced,
+            HeadlessCallAdmissionDisposition.DEFERRED to quiesced,
+        ).map { (disposition, release) ->
+            validCompletionObject(identity()).copy(disposition = disposition) to release
         } + listOf(
             validCompletionObject(identity()).copy(
                 disposition = HeadlessCallAdmissionDisposition.DEFERRED,
                 requiredPersistenceComplete = false,
                 diagnosticCause = "graph_not_owner",
-            ),
-            validCompletionObject(identity()).copy(databaseClosed = false),
-            validCompletionObject(identity()).copy(leaseReleased = false),
-            validCompletionObject(identity()).copy(nonce = "stale"),
+            ) to quiesced,
+            validCompletionObject(identity()).copy(
+                disposition = HeadlessCallAdmissionDisposition.DEFERRED,
+                databaseClosed = false,
+            ) to retain,
+            validCompletionObject(identity()).copy(
+                disposition = HeadlessCallAdmissionDisposition.DEFERRED,
+                leaseReleased = false,
+            ) to retain,
+            validCompletionObject(identity()).copy(
+                disposition = HeadlessCallAdmissionDisposition.DEFERRED,
+                nonce = "stale",
+            ) to retain,
         )
-        for (completion in completions) {
+        for ((completion, expectedRelease) in completions) {
             val order = mutableListOf<String>()
+            val releases = mutableListOf<Pair<String, HeadlessCallAdmissionRelease>>()
             val runner = FakeHeadlessCallAdmissionRunner { completion }.also {
                 it.onFinish = { order += "cleanup"; true }
             }
-            execution(
+            val execution = execution(
                 runner = runner,
                 nowMs = { NOW_MS },
                 presentAuthenticated = { _, _ -> order += "present"; true },
                 terminalizeAuthenticated = { _, _ -> order += "terminal"; true },
-                releaseAdmission = { callId, requireTerminal ->
-                    assertEquals(CALL_ID, callId)
-                    assertEquals(
-                        completion.disposition != HeadlessCallAdmissionDisposition.TERMINAL,
-                        requireTerminal,
-                    )
+                releaseAdmission = { callId, release ->
+                    releases += callId to release
                     order += "release"
                 },
-            ).execute(validInput())
+            )
+            withTimeout(2_000L) { execution.execute(validInput()) }
             assertEquals("cleanup", order.first())
             assertEquals("release", order.last())
             assertEquals(1, order.count { it == "release" })
+            assertEquals(listOf(CALL_ID to expectedRelease), releases)
         }
     }
 
     @Test
     fun `timeout exception cancellation expiry and failed engine creation still release admission`() = runBlocking {
-        for (failure in listOf("timeout", "exception", "stopped", "expired", "factory", "finish")) {
-            val released = mutableListOf<String>()
+        for (failure in listOf("timeout", "exception", "stopped", "expired", "factory", "finish", "retained")) {
+            val released = mutableListOf<Pair<String, HeadlessCallAdmissionRelease>>()
             val runner = FakeHeadlessCallAdmissionRunner {
                 if (failure == "timeout") CompletableDeferred<HeadlessCallAdmissionCompletion>().await()
                 if (failure == "exception") error("engine failed")
-                validCompletionObject(it)
-            }.also { it.onFinish = { if (failure == "finish") error("cleanup failed") else true } }
+                validCompletionObject(it).copy(disposition = HeadlessCallAdmissionDisposition.DEFERRED)
+            }.also { it.onFinish = { if (failure == "finish") error("cleanup failed") else failure != "retained" } }
             val execution = HeadlessCallAdmissionExecution(
                 runnerFactory = { if (failure == "factory") error("creation failed") else runner },
                 isStopped = { failure == "stopped" },
@@ -365,11 +381,11 @@ class HeadlessCallAdmissionWorkerTest {
                 nonceFactory = { "nonce-a" },
                 presentAuthenticated = { _, _, _ -> error("must not present") },
                 terminalizeAuthenticated = { _, _ -> error("must not terminalize") },
-                releaseAdmission = { callId, _ -> released += callId },
+                releaseAdmission = { callId, release -> released += callId to release },
             )
-            execution.execute(validInput())
-            assertEquals(failure, listOf(CALL_ID), released)
-            if (failure in listOf("timeout", "exception", "finish")) assertEquals(1, runner.finishCalls)
+            withTimeout(2_000L) { execution.execute(validInput()) }
+            assertEquals(failure, listOf(CALL_ID to HeadlessCallAdmissionRelease.REQUIRE_TERMINAL), released)
+            if (failure in listOf("timeout", "exception", "finish", "retained")) assertEquals(1, runner.finishCalls)
         }
     }
 
@@ -612,7 +628,7 @@ class HeadlessCallAdmissionWorkerTest {
             nonceFactory = { "nonce-a" },
             presentAuthenticated = { _, _, _ -> error("must not present") },
             terminalizeAuthenticated = { _, _ -> error("must not terminalize") },
-            releaseAdmission = { callId, requireTerminal -> releases += callId to requireTerminal },
+            releaseAdmission = { callId, release -> releases += callId to release.requireTerminal },
             diagnostic = { _, event -> events += event },
             foregroundOwnsRuntime = { true },
         )
@@ -648,7 +664,7 @@ class HeadlessCallAdmissionWorkerTest {
             nonceFactory = { "nonce-a" },
             presentAuthenticated = { _, _, _ -> error("must not present") },
             terminalizeAuthenticated = { _, _ -> error("must not terminalize") },
-            releaseAdmission = { callId, requireTerminal -> releases += callId to requireTerminal },
+            releaseAdmission = { callId, release -> releases += callId to release.requireTerminal },
             diagnostic = { _, event -> events += event },
             foregroundOwnsRuntime = { true },
         ).execute(declineInput())
@@ -1122,8 +1138,8 @@ class HeadlessCallAdmissionWorkerTest {
                         terminalizations += 1
                         true
                     },
-                    releaseAdmission = { callId, requireTerminal ->
-                        assertFalse(requireTerminal)
+                    releaseAdmission = { callId, release ->
+                        assertEquals(HeadlessCallAdmissionRelease.SETTLED, release)
                         operations += "native.releaseAdmission"
                         released += callId
                     },
@@ -1362,7 +1378,7 @@ class HeadlessCallAdmissionWorkerTest {
         assertTrue(declineReply.contains("MknoonCallForegroundService.ACTION_START_ADMISSION"))
         assertTrue(runtime.contains("fun stopAdmissionForeground("))
         assertTrue(runtime.contains("MknoonCallForegroundService.ACTION_STOP"))
-        assertTrue(source.contains("MknoonCallForegroundService.releaseAdmission(applicationContext, callId, id, requireTerminal)"))
+        assertTrue(source.contains("MknoonCallForegroundService.releaseAdmission("))
     }
 
     private fun execution(
@@ -1371,7 +1387,7 @@ class HeadlessCallAdmissionWorkerTest {
         timeoutMillis: Long = 1_000L,
         presentAuthenticated: suspend (String, Long) -> Boolean,
         terminalizeAuthenticated: suspend (String, Long) -> Boolean = { _, _ -> true },
-        releaseAdmission: suspend (String, Boolean) -> Unit = { _, _ -> },
+        releaseAdmission: suspend (String, HeadlessCallAdmissionRelease) -> Unit = { _, _ -> },
         diagnostic: (String?, HeadlessCallAdmissionDiagnostic) -> Unit = { _, _ -> },
         presentAuthenticatedWithDisplay: (suspend (String, Long, MknoonIncomingCallDisplay?) -> Boolean)? = null,
     ): HeadlessCallAdmissionExecution = HeadlessCallAdmissionExecution(

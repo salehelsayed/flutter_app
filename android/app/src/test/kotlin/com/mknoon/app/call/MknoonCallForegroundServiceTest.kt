@@ -225,19 +225,33 @@ class MknoonCallForegroundServiceTest {
 
     @Test
     fun `quiesced deferred admission yields to a different fresh wake`() = runBlocking {
+        verifyDeferredAdmissionTransfer()
+    }
+
+    @Test
+    fun `quiesced admission keeps custody for a live owner or expired successor`() = runBlocking {
+        verifyDeferredAdmissionTransfer(nativeOwner = true)
+        verifyDeferredAdmissionTransfer(expiredSuccessor = true)
+    }
+
+    private suspend fun verifyDeferredAdmissionTransfer(
+        nativeOwner: Boolean = false,
+        expiredSuccessor: Boolean = false,
+    ) {
         var now = 1_000L
         val settlements = MknoonCallAdmissionSettlementStore(nowMs = { now })
         val runtime = RecordingForegroundRuntime().also { it.lifecycleActive = false }
         val service = MknoonCallForegroundService(runtime, settlements)
         var startId = 0
         fun deliver(command: Intent) = service.onStartCommand(command, 0, ++startId)
-        fun startAdmission(callId: UUID, wakeHandle: String): MknoonCallAdmissionToken {
-            val payload = CallWakePayload(callId, callId.toString(), wakeHandle, now, now + 45_000L)
-            val token = requireNotNull(settlements.register(payload, UUID.randomUUID()))
-            deliver(serviceIntent(MknoonCallForegroundService.ACTION_START_ADMISSION, callId, token.ownerId)
+        fun register(callId: UUID, wakeHandle: String, lifetimeMs: Long = 45_000L): MknoonCallAdmissionToken {
+            val payload = CallWakePayload(callId, callId.toString(), wakeHandle, now, now + lifetimeMs)
+            return requireNotNull(settlements.register(payload, UUID.randomUUID()))
+        }
+        fun startAdmission(token: MknoonCallAdmissionToken) {
+            deliver(serviceIntent(MknoonCallForegroundService.ACTION_START_ADMISSION, token.nativeCallId, token.ownerId)
                 .putExtra(MknoonCallForegroundService.EXTRA_ADMISSION_EXPIRES_AT_MS, token.expiresAtMs)
                 .putExtra(MknoonCallForegroundService.EXTRA_ADMISSION_WAKE_HANDLE, token.wakeHandle))
-            return token
         }
 
         var release: Intent? = null
@@ -249,7 +263,8 @@ class MknoonCallForegroundServiceTest {
             }
         }
         try {
-            val first = startAdmission(UUID.fromString(CALL_ID), "a".repeat(32))
+            val first = register(UUID.fromString(CALL_ID), "a".repeat(32))
+            startAdmission(first)
             var finished = false
             var presentationAttempts = 0
             var terminalizationAttempts = 0
@@ -287,8 +302,11 @@ class MknoonCallForegroundServiceTest {
                     terminalizationAttempts++
                     false
                 },
-                releaseAdmission = { callId, requireTerminal ->
-                    MknoonCallForegroundService.releaseAdmission(context, callId, first.ownerId, requireTerminal)
+                releaseAdmission = { callId, release ->
+                    MknoonCallForegroundService.releaseAdmission(
+                        context, callId, first.ownerId, release.requireTerminal,
+                        quiescedWithoutPresentation = release.quiescedWithoutPresentation,
+                    )
                 },
             )
             val input = Data.Builder()
@@ -307,13 +325,24 @@ class MknoonCallForegroundServiceTest {
 
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
             now += 1_000L
-            val second = startAdmission(UUID.fromString(OTHER_CALL_ID), "b".repeat(32))
-            assertEquals(listOf(first.nativeCallId, second.nativeCallId), runtime.admissionStarts)
+            val second = register(
+                UUID.fromString(OTHER_CALL_ID), "b".repeat(32),
+                lifetimeMs = if (expiredSuccessor) 500L else 45_000L,
+            )
+            if (expiredSuccessor) now = second.expiresAtMs
+            runtime.lifecycleActive = nativeOwner
+            startAdmission(second)
+
+            val transferred = !nativeOwner && !expiredSuccessor
+            assertEquals(listOfNotNull(first.nativeCallId, second.nativeCallId.takeIf { transferred }),
+                runtime.admissionStarts)
+            assertEquals(first.takeUnless { transferred }, settlements.capture(first.nativeCallId))
             deliver(lateRelease)
             assertTrue(runtime.stops.isEmpty())
             runtime.lifecycleActive = true
-            deliver(serviceIntent(MknoonCallForegroundService.ACTION_START_RINGING, second.nativeCallId))
-            assertEquals(listOf(second.nativeCallId), runtime.ringingStarts)
+            val active = if (transferred) second.nativeCallId else first.nativeCallId
+            deliver(serviceIntent(MknoonCallForegroundService.ACTION_START_RINGING, active))
+            assertEquals(listOf(active), runtime.ringingStarts)
         } finally {
             service.onDestroy()
         }
@@ -762,6 +791,9 @@ private class RecordingForegroundRuntime : MknoonCallForegroundRuntime {
         if (failTerminalLookup) error("terminal lookup unavailable")
         return terminalCallIds?.contains(nativeCallId) ?: lifecycleTerminal
     }
+
+    override fun transferUnownedAdmission(transfer: () -> Boolean): Boolean =
+        !lifecycleActive && transfer()
 
     override fun startAdmission(nativeCallId: UUID) {
         foregroundOperations += "admission"

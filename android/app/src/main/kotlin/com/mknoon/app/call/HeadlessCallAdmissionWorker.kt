@@ -42,6 +42,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -375,6 +377,15 @@ internal enum class HeadlessCallAdmissionWorkOutcome(val replyMode: HeadlessCall
     COMPLETED_WITHOUT_PRESENTATION,
 }
 
+internal enum class HeadlessCallAdmissionRelease(
+    val requireTerminal: Boolean,
+    val quiescedWithoutPresentation: Boolean = false,
+) {
+    REQUIRE_TERMINAL(true),
+    SETTLED(false),
+    QUIESCED_WITHOUT_PRESENTATION(true, quiescedWithoutPresentation = true),
+}
+
 /** Diagnostic-only fields; authority handles and invocation nonces stay outside the event. */
 internal data class HeadlessCallAdmissionDiagnostic(
     val operationId: String,
@@ -399,7 +410,7 @@ internal class HeadlessCallAdmissionExecution(
     private val presentationDiagnostic: (MknoonCallPresentationResult?) -> Unit = {},
     private val terminalizeAuthenticated: suspend (String, Long) -> Boolean,
     /** Attempts owned release; unresolved work also requires a native terminal tombstone. */
-    private val releaseAdmission: suspend (String, Boolean) -> Unit = { _, _ -> },
+    private val releaseAdmission: suspend (String, HeadlessCallAdmissionRelease) -> Unit = { _, _ -> },
     private val diagnostic: (String?, HeadlessCallAdmissionDiagnostic) -> Unit = { _, _ -> },
     private val monotonicMs: () -> Long = { System.nanoTime() / 1_000_000L },
     /** True while a foreground engine owns the canonical runtime lease. */
@@ -417,9 +428,9 @@ internal class HeadlessCallAdmissionExecution(
         inputData: Data,
         runAttemptCount: Int = 0,
     ): HeadlessCallAdmissionWorkOutcome {
-        var settled = false
+        var release = HeadlessCallAdmissionRelease.REQUIRE_TERMINAL
         try {
-            return executeOnce(inputData, runAttemptCount, onSettled = { settled = true })
+            return executeOnce(inputData, runAttemptCount, onRelease = { release = it })
         } finally {
             val callId = inputData.keyValueMap[HeadlessCallAdmissionWorkScheduler.INPUT_CALL_ID]
                 as? String
@@ -428,8 +439,15 @@ internal class HeadlessCallAdmissionExecution(
                 // invitation. Preserve its foreground start window unless this
                 // exact call has already ended natively. All releases are also
                 // fenced by work UUID and service mode at delivery time.
+                val canceled = !currentCoroutineContext().isActive
                 withContext(NonCancellable) {
-                    runCatching { releaseAdmission(callId, !settled) }
+                    runCatching {
+                        if (release.quiescedWithoutPresentation &&
+                            (canceled || stopRequested.get() || isStopped())) {
+                            release = HeadlessCallAdmissionRelease.REQUIRE_TERMINAL
+                        }
+                        releaseAdmission(callId, release)
+                    }
                 }
             }
         }
@@ -438,7 +456,7 @@ internal class HeadlessCallAdmissionExecution(
     private suspend fun executeOnce(
         inputData: Data,
         runAttemptCount: Int,
-        onSettled: () -> Unit,
+        onRelease: (HeadlessCallAdmissionRelease) -> Unit,
     ): HeadlessCallAdmissionWorkOutcome {
         // This separate operation reference never participates in the nonce or
         // custody protocol. Even allocation, clock, and sink errors are contained.
@@ -477,7 +495,9 @@ internal class HeadlessCallAdmissionExecution(
             ?: return finish("failed", "native_lifecycle_failed")
         val invocation = parseInput(inputData, observedNow)
             ?: return finish("rejected", "invalid_request")
-        if (invocation.mode != HeadlessCallAdmissionMode.ADMISSION) onSettled()
+        if (invocation.mode != HeadlessCallAdmissionMode.ADMISSION) {
+            onRelease(HeadlessCallAdmissionRelease.SETTLED)
+        }
         diagnosticHandle = invocation.callId
         observe("start", "started", values = mapOf("attemptCount" to runAttemptCount))
         val nonce = runCatching(nonceFactory).getOrNull()
@@ -559,12 +579,22 @@ internal class HeadlessCallAdmissionExecution(
             if (completion != null) "malformed_response" else executionFailure,
             completionValues,
         )
+        val cleanupComplete = authenticated.databaseClosed && authenticated.leaseReleased && safelyReleased
+        val finishedWithoutPresentation = when (authenticated.disposition) {
+            HeadlessCallAdmissionDisposition.DEFERRED -> true
+            HeadlessCallAdmissionDisposition.PERMANENT_REJECT,
+            HeadlessCallAdmissionDisposition.EMPTY_OR_ALREADY_ACKED -> authenticated.requiredPersistenceComplete
+            else -> false
+        }
+        if (cleanupComplete && finishedWithoutPresentation && !stopRequested.get() && !isStopped()) {
+            onRelease(HeadlessCallAdmissionRelease.QUIESCED_WITHOUT_PRESENTATION)
+        }
         if (!authenticated.requiredPersistenceComplete) {
             // False means the admission persistence gate is unsatisfied; it does
             // not establish that a write was attempted or failed.
             return finish("pending", completionCause ?: "unknown", completionValues)
         }
-        if (!authenticated.databaseClosed || !authenticated.leaseReleased || !safelyReleased) {
+        if (!cleanupComplete) {
             return finish("rejected", "cleanup_failed", completionValues)
         }
         if (stopRequested.get() || isStopped()) return finish("canceled", "canceled", completionValues)
@@ -590,7 +620,7 @@ internal class HeadlessCallAdmissionExecution(
                             isPresentationFailureSettled(authenticated.callId, authenticated.expiresAtMs)
                         }.getOrDefault(false)
                         if (settled) {
-                            onSettled()
+                            onRelease(HeadlessCallAdmissionRelease.SETTLED)
                             finish(
                                 "failed", "native_lifecycle_failed", completionValues,
                                 HeadlessCallAdmissionWorkOutcome.PRESENTATION_FAILED,
@@ -612,7 +642,7 @@ internal class HeadlessCallAdmissionExecution(
                 } catch (_: Throwable) {
                     false
                 }
-                if (terminalized) onSettled()
+                if (terminalized) onRelease(HeadlessCallAdmissionRelease.SETTLED)
                 finish(if (terminalized) "completed" else "failed",
                     if (terminalized) "remote_terminal" else "cleanup_failed", completionValues)
             }
@@ -787,9 +817,12 @@ internal class HeadlessCallAdmissionWorker(
                     runtime.terminalizeAuthenticated(callId, expiresAtMs)
                 }
             },
-            releaseAdmission = { callId, requireTerminal ->
+            releaseAdmission = { callId, release ->
                 withContext(Dispatchers.Main.immediate) {
-                    MknoonCallForegroundService.releaseAdmission(applicationContext, callId, id, requireTerminal)
+                    MknoonCallForegroundService.releaseAdmission(
+                        applicationContext, callId, id, release.requireTerminal,
+                        quiescedWithoutPresentation = release.quiescedWithoutPresentation && !isStopped,
+                    )
                 }
             },
             diagnostic = { handle, event ->

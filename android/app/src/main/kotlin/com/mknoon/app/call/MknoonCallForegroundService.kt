@@ -15,6 +15,8 @@ internal interface MknoonCallForegroundRuntime {
 
     fun isTerminalLifecycle(nativeCallId: UUID): Boolean = false
 
+    fun transferUnownedAdmission(transfer: () -> Boolean): Boolean = false
+
     /**
      * Silent placeholder entered inside the high-priority FCM start window,
      * before the pushed call is authenticated. Ringing then upgrades an
@@ -63,6 +65,7 @@ internal class MknoonCallForegroundService(
         internal const val EXTRA_ADMISSION_EXPIRES_AT_MS = "com.mknoon.app.call.service.extra.ADMISSION_EXPIRES_AT_MS"
         internal const val EXTRA_ADMISSION_WAKE_HANDLE = "com.mknoon.app.call.service.extra.ADMISSION_WAKE_HANDLE"
         internal const val EXTRA_ADMISSION_SETTLED_TOKEN = "com.mknoon.app.call.service.extra.ADMISSION_SETTLED_TOKEN"
+        private const val EXTRA_ADMISSION_QUIESCED = "com.mknoon.app.call.service.extra.ADMISSION_QUIESCED"
         private val ACTIONS = setOf(
             ACTION_START_ADMISSION,
             ACTION_RELEASE_ADMISSION,
@@ -77,6 +80,7 @@ internal class MknoonCallForegroundService(
             callId: String,
             ownerId: UUID,
             requireTerminal: Boolean = true,
+            quiescedWithoutPresentation: Boolean = false,
         ) {
             val nativeCallId = runCatching { UUID.fromString(callId) }.getOrNull() ?: return
             val intent = Intent(context, MknoonCallForegroundService::class.java)
@@ -84,6 +88,9 @@ internal class MknoonCallForegroundService(
                 .putExtra(EXTRA_NATIVE_CALL_ID, nativeCallId.toString())
                 .putExtra(EXTRA_ADMISSION_OWNER_ID, ownerId.toString())
                 .putExtra(EXTRA_ADMISSION_REQUIRE_TERMINAL, requireTerminal)
+            if (requireTerminal && quiescedWithoutPresentation) {
+                intent.putExtra(EXTRA_ADMISSION_QUIESCED, true)
+            }
             runCatching { context.startService(intent) }
         }
 
@@ -109,6 +116,7 @@ internal class MknoonCallForegroundService(
     private var admissionOwnerId: UUID? = null
     private var admissionHoldsDeclineReply = false
     private var admissionToken: MknoonCallAdmissionToken? = null
+    private var quiescedAdmissionToken: MknoonCallAdmissionToken? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -148,12 +156,7 @@ internal class MknoonCallForegroundService(
                         settlements.block(nativeCallId, ownerId)
                         return START_NOT_STICKY
                     }
-                    activeCallId = nativeCallId
-                    mode = MknoonCallForegroundMode.ADMISSION
-                    admissionOwnerId = ownerId
-                    admissionToken = admissionToken(intent, nativeCallId, requireNotNull(ownerId))
-                    admissionHoldsDeclineReply = declineReply
-                    scheduleAdmissionTimeout(nativeCallId, requireNotNull(ownerId), startId)
+                    holdAdmission(nativeCallId, requireNotNull(ownerId), incomingToken, declineReply, startId)
                     observe(target, nativeCallId, MknoonCallAdmissionEvent.START_APPLIED)
                 } else if (activeCallId == nativeCallId && mode == MknoonCallForegroundMode.ADMISSION &&
                     admissionOwnerId != ownerId
@@ -161,15 +164,20 @@ internal class MknoonCallForegroundService(
                     // Same-call work is serialized. A newer queued request keeps
                     // foreground custody when an older request finishes.
                     admissionOwnerId = ownerId
-                    admissionToken = admissionToken(intent, nativeCallId, requireNotNull(ownerId))
+                    admissionToken = incomingToken
+                    quiescedAdmissionToken = null
                     // A later queued ordinary wake must not strip custody from
                     // the decline reply that is still running ahead of it.
                     admissionHoldsDeclineReply = admissionHoldsDeclineReply || declineReply
                     scheduleAdmissionTimeout(nativeCallId, requireNotNull(ownerId), startId)
                     observe(target, nativeCallId, MknoonCallAdmissionEvent.START_REPLACED_OWNER)
                 } else if (activeCallId != nativeCallId) {
-                    settlements.block(nativeCallId, ownerId)
-                    observe(target, nativeCallId, MknoonCallAdmissionEvent.START_IGNORED_OTHER_CALL)
+                    if (!declineReply && incomingToken != null && transferAdmission(target, incomingToken, startId)) {
+                        observe(target, nativeCallId, MknoonCallAdmissionEvent.START_APPLIED)
+                    } else {
+                        settlements.block(nativeCallId, ownerId)
+                        observe(target, nativeCallId, MknoonCallAdmissionEvent.START_IGNORED_OTHER_CALL)
+                    }
                 } else if (mode != MknoonCallForegroundMode.ADMISSION) {
                     settlements.block(nativeCallId, ownerId)
                     observe(target, nativeCallId, MknoonCallAdmissionEvent.START_IGNORED_UPGRADED)
@@ -334,8 +342,14 @@ internal class MknoonCallForegroundService(
                         token != admissionToken || !settlements.isSettled(token)) ->
                         observe(target, nativeCallId, MknoonCallAdmissionEvent.RELEASE_DEFERRED)
                     requireTerminal &&
-                        !runCatching { target.isTerminalLifecycle(nativeCallId) }.getOrDefault(false) ->
+                        !runCatching { target.isTerminalLifecycle(nativeCallId) }.getOrDefault(false) -> {
+                        if (!settlementRelease && !admissionHoldsDeclineReply &&
+                            intent.extras?.get(EXTRA_ADMISSION_QUIESCED) == true) {
+                            quiescedAdmissionToken = admissionToken
+                                ?.takeIf { settlements.capture(nativeCallId) == it }
+                        }
                         observe(target, nativeCallId, MknoonCallAdmissionEvent.RELEASE_DEFERRED)
+                    }
                     else -> stopOwnedForeground(
                         target, nativeCallId, startId,
                         if (requireTerminal) MknoonCallAdmissionEvent.RELEASE_APPLIED_TERMINAL
@@ -357,9 +371,46 @@ internal class MknoonCallForegroundService(
             }
         }
         if (activeCallId == nativeCallId && mode != MknoonCallForegroundMode.ADMISSION) {
+            quiescedAdmissionToken = null
             settlements.block(nativeCallId, admissionOwnerId)
         }
         return START_NOT_STICKY
+    }
+
+    private fun holdAdmission(
+        callId: UUID,
+        ownerId: UUID,
+        token: MknoonCallAdmissionToken?,
+        declineReply: Boolean,
+        startId: Int,
+    ) {
+        activeCallId = callId
+        mode = MknoonCallForegroundMode.ADMISSION
+        admissionOwnerId = ownerId
+        admissionToken = token
+        quiescedAdmissionToken = null
+        admissionHoldsDeclineReply = declineReply
+        scheduleAdmissionTimeout(callId, ownerId, startId)
+    }
+
+    private fun transferAdmission(
+        target: MknoonCallForegroundRuntime,
+        incoming: MknoonCallAdmissionToken,
+        startId: Int,
+    ): Boolean {
+        val previous = quiescedAdmissionToken ?: return false
+        if (mode != MknoonCallForegroundMode.ADMISSION || admissionHoldsDeclineReply ||
+            previous != admissionToken || previous.nativeCallId != activeCallId ||
+            previous.ownerId != admissionOwnerId) return false
+        return target.transferUnownedAdmission {
+            if (!settlements.canTransferAdmission(previous, incoming)) return@transferUnownedAdmission false
+            if (!startSafely(startId, incoming.nativeCallId, target, preserveServiceOnFailure = true) {
+                    target.startAdmission(incoming.nativeCallId)
+                }) return@transferUnownedAdmission false
+            clearAdmission()
+            holdAdmission(incoming.nativeCallId, incoming.ownerId, incoming, false, startId)
+            true
+        }
     }
 
     private fun reconcilesLifecycle(
@@ -391,12 +442,17 @@ internal class MknoonCallForegroundService(
         startId: Int,
         nativeCallId: UUID,
         target: MknoonCallForegroundRuntime,
+        preserveServiceOnFailure: Boolean = false,
         start: () -> Unit,
     ): Boolean = try {
         start()
         true
     } catch (_: Exception) {
-        failStart(startId, nativeCallId, target)
+        if (preserveServiceOnFailure) {
+            runCatching { target.onStartFailure(nativeCallId) }
+        } else {
+            failStart(startId, nativeCallId, target)
+        }
         false
     }
 
@@ -514,6 +570,7 @@ internal class MknoonCallForegroundService(
         activeCallId?.let { settlements.retire(it, admissionOwnerId) }
         admissionOwnerId = null
         admissionToken = null
+        quiescedAdmissionToken = null
         admissionHoldsDeclineReply = false
         admissionTimeout.removeCallbacksAndMessages(null)
     }

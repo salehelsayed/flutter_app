@@ -24,6 +24,7 @@ import androidx.core.telecom.CallControlResult
 import androidx.core.telecom.CallEndpointCompat
 import androidx.core.telecom.CallsManager
 import com.mknoon.app.BuildConfig
+import com.mknoon.app.ProcessCanonicalRuntimeLease
 import io.flutter.plugin.common.BinaryMessenger
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -33,6 +34,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -302,7 +305,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     }
     private val expiryJobs = ConcurrentHashMap<UUID, Job>()
     private val cleanupJobs = ConcurrentHashMap<UUID, Job>()
-    private val authenticatedIngressLock = Any()
+    private val authenticatedIngressLock = ReentrantLock()
     private val startupPresentation = AtomicReference<UUID?>(null)
     private val terminalTombstones = MknoonCallTerminalTombstones(preferences)
     internal val eventRelay = MknoonCallEventRelay()
@@ -444,18 +447,18 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     fun present(payload: CallWakePayload): MknoonCallPresentationResult = present(payload, null)
 
     private fun present(payload: CallWakePayload, display: MknoonIncomingCallDisplay?): MknoonCallPresentationResult =
-        synchronized(authenticatedIngressLock) {
+        authenticatedIngressLock.withLock {
             val observedNow = System.currentTimeMillis()
             if (
                 isCapabilityEnabled() &&
                 hasTerminalTombstone(payload.nativeCallId, observedNow)
             ) {
-                return@synchronized MknoonCallPresentationResult.DUPLICATE
+                return@withLock MknoonCallPresentationResult.DUPLICATE
             }
             if (controller.snapshot()?.matchesAuthenticatedPresentationRetry(payload, observedNow) == true) {
                 // An exact retry keeps the local deadline set by the first presentation.
                 restoreStartupPresentation(payload.nativeCallId)
-                return@synchronized MknoonCallPresentationResult.DUPLICATE
+                return@withLock MknoonCallPresentationResult.DUPLICATE
             }
             controller.present(payload, display).also { result ->
                 diagnostics.record(payload.callHandle, "presentation", "present",
@@ -519,7 +522,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             capabilityEnabled = isCapabilityEnabled(),
             handleGrammar = AUTHENTICATED_HANDLE,
             terminalize = { nativeCallId, terminalExpiryMs ->
-                synchronized(authenticatedIngressLock) {
+                authenticatedIngressLock.withLock {
                     val current = controller.snapshot()
                     if (
                         current?.nativeCallId == nativeCallId &&
@@ -534,7 +537,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
                             afterTermination?.nativeCallId == nativeCallId &&
                             afterTermination.terminalEvent == null
                         ) {
-                            return@synchronized false
+                            return@withLock false
                         }
                     }
                     recordTerminalTombstone(nativeCallId, terminalExpiryMs)
@@ -543,7 +546,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         )
     }
 
-    fun registerOutgoingAuthenticated(callHandle: String, expiresAtMs: Long): Boolean = synchronized(authenticatedIngressLock) {
+    fun registerOutgoingAuthenticated(callHandle: String, expiresAtMs: Long): Boolean = authenticatedIngressLock.withLock {
         val observedNow = System.currentTimeMillis()
         presentAuthenticatedCall(
             callHandle = callHandle,
@@ -557,13 +560,13 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     }
 
     private fun captureAdmissionSettlement(nativeCallId: UUID): MknoonCallAdmissionToken? =
-        synchronized(authenticatedIngressLock) {
+        authenticatedIngressLock.withLock {
             if (!isCapabilityEnabled() || admissionSettlementHasNativeOwner(controller::observeJournal)) null
             else ProcessMknoonCallAdmissionSettlements.store.capture(nativeCallId)
         }
 
     private fun settleAuthenticatedAdmission(token: MknoonCallAdmissionToken): Boolean =
-        synchronized(authenticatedIngressLock) {
+        authenticatedIngressLock.withLock {
             // The foreground caller supplies cryptographic terminal/ACK proof.
             // Native independently fences the exact work and refuses any live
             // native owner. Never terminate or rewrite a native journal here.
@@ -829,6 +832,19 @@ internal class MknoonCallRuntime private constructor(context: Context) {
 
         override fun isTerminalLifecycle(nativeCallId: UUID): Boolean =
             hasTerminalTombstone(nativeCallId, System.currentTimeMillis())
+
+        override fun transferUnownedAdmission(transfer: () -> Boolean): Boolean {
+            // Off-main Telecom registration can hold ingress while awaiting Main.
+            if (!authenticatedIngressLock.tryLock()) return false
+            return try {
+                val foregroundOwner = runCatching {
+                    foregroundOwnsCanonicalRuntime(ProcessCanonicalRuntimeLease.broker.snapshot())
+                }.getOrDefault(true)
+                !foregroundOwner && !admissionSettlementHasNativeOwner(controller::observeJournal) && transfer()
+            } finally {
+                authenticatedIngressLock.unlock()
+            }
+        }
 
         override fun onAdmissionEvent(nativeCallId: UUID, event: MknoonCallAdmissionEvent) {
             diagnostics.record(
