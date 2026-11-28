@@ -23,6 +23,7 @@ const (
 	activeIdentityStoreVersion       = 1
 	activeIdentityStoreCalendar      = "Europe/Berlin"
 	activeIdentityStoreSnapshotLimit = 2 << 20
+	activeIdentityObservationPeriod  = time.Minute
 )
 
 var (
@@ -34,8 +35,9 @@ var (
 )
 
 type activeIdentityFinalized struct {
-	Day    string                 `json:"day"`
-	Counts activeIdentityEstimate `json:"counts"`
+	Day     string                 `json:"day"`
+	Counts  activeIdentityEstimate `json:"counts"`
+	Partial bool                   `json:"partial,omitempty"`
 }
 
 type activeIdentityOpenDay struct {
@@ -49,12 +51,15 @@ type activeIdentityDayDisk struct {
 	Sketch []byte `json:"sketch"`
 }
 
+// Coverage fields are optional so old snapshots still load. Older binaries
+// cannot read the new fields because their decoder rejects unknown fields.
 type activeIdentityStoreDisk struct {
 	Version          int                       `json:"version"`
 	Calendar         string                    `json:"calendar"`
 	KeyID            string                    `json:"key_id"`
 	Generation       uint64                    `json:"generation"`
 	MeasurementStart time.Time                 `json:"measurement_start"`
+	ObservedAt       *time.Time                `json:"observed_at,omitempty"`
 	OpenDay          activeIdentityOpenDay     `json:"open_day"`
 	Days             []activeIdentityDayDisk   `json:"days"`
 	Finalized        []activeIdentityFinalized `json:"finalized"`
@@ -70,6 +75,7 @@ type activeIdentityStore struct {
 	write             func(string, []byte) error
 	sketches          *activeDailySketches
 	measurementStart  time.Time
+	observedAt        time.Time
 	openDay           activeIdentityOpenDay
 	finals            []activeIdentityFinalized
 	durableFinals     []activeIdentityFinalized
@@ -130,9 +136,23 @@ func newActiveIdentityStoreWithEngagement(path string, key []byte, now func() ti
 	} else {
 		s.measurementStart = at
 	}
-	// Restart cannot establish continuous observation of the saved open day.
-	// Retain its raw contributions and frozen history, but begin coverage anew.
-	s.openDay = activeIdentityOpenDay{today, at, at.Equal(midnight)}
+	// A durable observation within one stats interval bounds a restart gap.
+	// Without it, the old sketches are still usable as partial estimates.
+	continuous := exists && !s.observedAt.IsZero() && !at.Before(s.observedAt) && at.Sub(s.observedAt) <= activeIdentityObservationPeriod
+	if exists {
+		previous, _ := activitycalendar.Parse(s.openDay.Day)
+		continuous = continuous && !midnight.After(previous.AddDate(0, 0, 1))
+		frozen, err := s.missingFinalsLocked(midnight, continuous)
+		if err != nil {
+			s.mu.Unlock()
+			return nil, err
+		}
+		s.finals = append(s.finals, frozen...)
+	}
+	if !continuous || s.openDay.Day != today {
+		s.startDayLocked(today, at, midnight, continuous)
+	}
+	s.observedAt = at
 	s.pruneLocked(midnight)
 	if err := s.nextGenerationLocked(); err != nil {
 		s.mu.Unlock()
@@ -193,6 +213,10 @@ func (s *activeIdentityStore) admit(day, canonicalAccount string) error {
 }
 
 func (s *activeIdentityStore) advance() error {
+	return s.advanceAndSave(false)
+}
+
+func (s *activeIdentityStore) advanceAndSave(checkpoint bool) error {
 	for {
 		s.mu.Lock()
 		at := s.now()
@@ -207,6 +231,12 @@ func (s *activeIdentityStore) advance() error {
 		if err := s.advanceLocked(at); err != nil {
 			s.mu.Unlock()
 			return err
+		}
+		if checkpoint && s.saved == s.generation {
+			if err := s.nextGenerationLocked(); err != nil {
+				s.mu.Unlock()
+				return err
+			}
 		}
 		target := s.generation
 		s.mu.Unlock()
@@ -263,6 +293,7 @@ func (s *activeIdentityStore) advanceLocked(at time.Time) error {
 		return errActiveIdentityStoreDay
 	}
 	if today == s.openDay.Day {
+		s.observedAt = at
 		return nil
 	}
 	midnight, err := activitycalendar.Parse(today)
@@ -271,28 +302,50 @@ func (s *activeIdentityStore) advanceLocked(at time.Time) error {
 	}
 	previous, _ := activitycalendar.Parse(s.openDay.Day)
 	continuous := previous.AddDate(0, 0, 1).Equal(midnight)
-	var finished *activeIdentityFinalized
-	if continuous && s.openDay.FullDayEligible {
-		// Compute all three unions before dropping the oldest raw sketch.
-		counts, err := s.sketches.estimate(s.openDay.Day)
-		if err != nil {
-			return errActiveIdentityStoreSnapshot
-		}
-		finished = &activeIdentityFinalized{s.openDay.Day, counts}
+	frozen, err := s.missingFinalsLocked(midnight, continuous)
+	if err != nil {
+		return err
 	}
 	if err := s.nextGenerationLocked(); err != nil {
 		return err
 	}
-	if finished != nil {
-		s.finals = append(s.finals, *finished)
-	}
+	s.finals = append(s.finals, frozen...)
+	s.startDayLocked(today, at, midnight, continuous)
+	s.observedAt = at
+	s.pruneLocked(midnight)
+	return nil
+}
+
+func (s *activeIdentityStore) startDayLocked(today string, at, midnight time.Time, continuous bool) {
 	observingFrom := at
 	if continuous {
 		observingFrom = midnight
 	}
 	s.openDay = activeIdentityOpenDay{today, observingFrom, continuous || at.Equal(midnight)}
-	s.pruneLocked(midnight)
-	return nil
+}
+
+func (s *activeIdentityStore) missingFinalsLocked(midnight time.Time, continuous bool) ([]activeIdentityFinalized, error) {
+	epochDay := activitycalendar.Day(s.measurementStart)
+	finalized := make(map[string]bool, len(s.finals))
+	for _, value := range s.finals {
+		finalized[value.Day] = true
+	}
+	pending := make([]activeIdentityFinalized, 0, 7)
+	for date := midnight.AddDate(0, 0, -7); date.Before(midnight); date = date.AddDate(0, 0, 1) {
+		day := date.Format("2006-01-02")
+		if day < epochDay || finalized[day] {
+			continue
+		}
+		// Compute unions before dropping the oldest raw sketch. Absent sketches
+		// contribute zero observed marks to these lower-bound estimates.
+		counts, err := s.sketches.estimate(day)
+		if err != nil {
+			return nil, errActiveIdentityStoreSnapshot
+		}
+		fullDay := day == s.openDay.Day && continuous && s.openDay.FullDayEligible
+		pending = append(pending, activeIdentityFinalized{Day: day, Counts: counts, Partial: !fullDay})
+	}
+	return pending, nil
 }
 
 func (s *activeIdentityStore) pruneLocked(midnight time.Time) {
@@ -326,10 +379,11 @@ func (s *activeIdentityStore) flushThrough(target uint64) error {
 		s.mu.Unlock()
 		return nil
 	}
+	observedAt := s.observedAt
 	disk := activeIdentityStoreDisk{
 		Version: activeIdentityStoreVersion, Calendar: activeIdentityStoreCalendar,
 		KeyID: s.keyID, Generation: s.generation, MeasurementStart: s.measurementStart,
-		OpenDay: s.openDay, Finalized: append([]activeIdentityFinalized(nil), s.finals...),
+		ObservedAt: &observedAt, OpenDay: s.openDay, Finalized: append([]activeIdentityFinalized(nil), s.finals...),
 	}
 	dates := make([]string, 0, len(s.sketches.days))
 	for day := range s.sketches.days {
@@ -447,11 +501,12 @@ func activeIdentityReadSnapshot(path string) ([]byte, bool, error) {
 // Keep this projection local: the shared estimate type has no store codec policy.
 func activeIdentityDecodeSnapshot(raw []byte) (activeIdentityStoreDisk, error) {
 	var required struct {
-		Version          *int       `json:"version"`
-		Calendar         *string    `json:"calendar"`
-		KeyID            *string    `json:"key_id"`
-		Generation       *uint64    `json:"generation"`
-		MeasurementStart *time.Time `json:"measurement_start"`
+		Version          *int            `json:"version"`
+		Calendar         *string         `json:"calendar"`
+		KeyID            *string         `json:"key_id"`
+		Generation       *uint64         `json:"generation"`
+		MeasurementStart *time.Time      `json:"measurement_start"`
+		ObservedAt       json.RawMessage `json:"observed_at"`
 		OpenDay          *struct {
 			Day             *string    `json:"day"`
 			ObservingFrom   *time.Time `json:"observing_from"`
@@ -471,14 +526,20 @@ func activeIdentityDecodeSnapshot(raw []byte) (activeIdentityStoreDisk, error) {
 	}
 	disk.Version, disk.Calendar, disk.KeyID = *required.Version, *required.Calendar, *required.KeyID
 	disk.Generation, disk.MeasurementStart = *required.Generation, *required.MeasurementStart
+	if len(required.ObservedAt) != 0 {
+		if json.Unmarshal(required.ObservedAt, &disk.ObservedAt) != nil || disk.ObservedAt == nil {
+			return disk, errActiveIdentityStoreSnapshot
+		}
+	}
 	disk.OpenDay = activeIdentityOpenDay{*required.OpenDay.Day, *required.OpenDay.ObservingFrom, *required.OpenDay.FullDayEligible}
 	var days []struct {
 		Day    *string `json:"day"`
 		Sketch *[]byte `json:"sketch"`
 	}
 	var finals []struct {
-		Day    *string                             `json:"day"`
-		Counts *struct{ Day, Week, Month *uint64 } `json:"counts"`
+		Day     *string                             `json:"day"`
+		Counts  *struct{ Day, Week, Month *uint64 } `json:"counts"`
+		Partial json.RawMessage                     `json:"partial"`
 	}
 	if appDiagnosticDecode(required.Days, &days) != nil || appDiagnosticDecode(required.Finalized, &finals) != nil ||
 		len(days) > 31 || len(finals) > 7 {
@@ -494,9 +555,17 @@ func activeIdentityDecodeSnapshot(raw []byte) (activeIdentityStoreDisk, error) {
 		if value.Day == nil || value.Counts == nil || value.Counts.Day == nil || value.Counts.Week == nil || value.Counts.Month == nil {
 			return disk, errActiveIdentityStoreSnapshot
 		}
-		disk.Finalized = append(disk.Finalized, activeIdentityFinalized{
-			*value.Day, activeIdentityEstimate{*value.Counts.Day, *value.Counts.Week, *value.Counts.Month},
-		})
+		final := activeIdentityFinalized{
+			Day: *value.Day, Counts: activeIdentityEstimate{*value.Counts.Day, *value.Counts.Week, *value.Counts.Month},
+		}
+		if len(value.Partial) != 0 {
+			var partial *bool
+			if json.Unmarshal(value.Partial, &partial) != nil || partial == nil {
+				return disk, errActiveIdentityStoreSnapshot
+			}
+			final.Partial = *partial
+		}
+		disk.Finalized = append(disk.Finalized, final)
 	}
 	var err error
 	disk.Engagement, err = activeEngagementDecode(required.Engagement)
@@ -521,6 +590,14 @@ func (s *activeIdentityStore) restoreLocked(disk activeIdentityStoreDisk, at tim
 		activitycalendar.Day(disk.OpenDay.ObservingFrom) != disk.OpenDay.Day ||
 		(disk.OpenDay.FullDayEligible && !disk.OpenDay.ObservingFrom.Equal(open)) {
 		return errActiveIdentityStoreSnapshot
+	}
+	if disk.ObservedAt != nil {
+		observedAt := *disk.ObservedAt
+		if observedAt.IsZero() || observedAt.Before(disk.OpenDay.ObservingFrom) ||
+			activitycalendar.Day(observedAt) != disk.OpenDay.Day {
+			return errActiveIdentityStoreSnapshot
+		}
+		s.observedAt = observedAt
 	}
 	// Validate bounds relative to the SAVED calendar first. A valid old snapshot
 	// remains valid after long downtime; current-date pruning happens afterward.
@@ -558,7 +635,8 @@ func (s *activeIdentityStore) restoreLocked(disk activeIdentityStoreDisk, at tim
 	seen := make(map[string]bool, len(disk.Finalized))
 	for _, value := range disk.Finalized {
 		date, err := activitycalendar.Parse(value.Day)
-		if err != nil || value.Day < firstFinal || value.Day >= disk.OpenDay.Day || date.Before(firstObserved) || seen[value.Day] {
+		if err != nil || value.Day < firstFinal || value.Day < epochDay || value.Day >= disk.OpenDay.Day ||
+			(!value.Partial && date.Before(firstObserved)) || seen[value.Day] {
 			return errActiveIdentityStoreSnapshot
 		}
 		seen[value.Day] = true

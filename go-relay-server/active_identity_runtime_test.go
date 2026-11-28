@@ -47,7 +47,9 @@ func b29RuntimeContains(t *testing.T, body string, lines ...string) {
 func b29RuntimeNoEstimates(t *testing.T, body string) {
 	t.Helper()
 	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(line, "relay_active_identities_estimated{") || strings.HasPrefix(line, "relay_engagement_weekly_estimated{") {
+		if strings.HasPrefix(line, "relay_active_identities_estimated{") ||
+			strings.HasPrefix(line, "relay_active_identities_coverage_partial{") ||
+			strings.HasPrefix(line, "relay_engagement_weekly_estimated{") {
 			t.Fatalf("unavailable aggregate exposed as a measured row: %s", line)
 		}
 	}
@@ -138,7 +140,7 @@ func TestB29RuntimeUnavailableAndWeeklyOff(t *testing.T) {
 		}
 		body := b29RuntimeScrape(t, stores.Inbox)
 		b29RuntimeContains(t, body, "relay_active_identities_storage_ready 1", "relay_engagement_storage_ready 0")
-		b29RuntimeNoEstimates(t, body) // Fresh partial day is absent, never zero-filled.
+		b29RuntimeNoEstimates(t, body) // The open day remains absent despite durable marks.
 	})
 }
 
@@ -167,6 +169,7 @@ func TestB29RuntimeCollectorDurableCalendarAndKinds(t *testing.T) {
 	for _, window := range []string{"1d", "7d", "30d"} {
 		b29RuntimeContains(t, body, fmt.Sprintf("relay_active_identities_estimated{day=\"2026-03-29\",window=\"%s\"} 1", window))
 	}
+	b29RuntimeContains(t, body, "relay_active_identities_coverage_partial{day=\"2026-03-29\"} 0")
 	b29RuntimeContains(t, body, "relay_engagement_weekly_estimated{kind=\"active\",week=\"2026-W14\"} 0", "relay_engagement_weekly_estimated{kind=\"reciprocal\",week=\"2026-W13\"} 1")
 	for _, private := range []string{"public-person-a", "public-group-only", "signature", "pairDigest", "accountPeerId"} {
 		if strings.Contains(body, private) {
@@ -217,6 +220,7 @@ func TestB29RuntimeCollectorFinalizesSignedMarksAfterRestart(t *testing.T) {
 			for _, window := range []string{"1d", "7d", "30d"} {
 				b29RuntimeContains(t, body, fmt.Sprintf("relay_active_identities_estimated{day=%q,window=%q} 2", day, window))
 			}
+			b29RuntimeContains(t, body, fmt.Sprintf("relay_active_identities_coverage_partial{day=%q} 1", day))
 		})
 	}
 }

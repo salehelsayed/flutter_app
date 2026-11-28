@@ -28,6 +28,7 @@ func newConfiguredActiveIdentityStore() (*activeIdentityStore, error) {
 var (
 	activeIdentityReadyDesc      = prometheus.NewDesc("relay_active_identities_storage_ready", "Whether durable consented active identity aggregates are available.", nil, nil)
 	activeIdentityEstimateDesc   = prometheus.NewDesc("relay_active_identities_estimated", "Estimated consenting app identities in observed Berlin calendar windows; coverage is incomplete.", []string{"window", "day"}, nil)
+	activeIdentityCoverageDesc   = prometheus.NewDesc("relay_active_identities_coverage_partial", "Whether observation of the closed Berlin day was partial or unknown. Counts on those days estimate observed marks only.", []string{"day"}, nil)
 	activeEngagementReadyDesc    = prometheus.NewDesc("relay_engagement_storage_ready", "Whether durable consented weekly engagement aggregates are available.", nil, nil)
 	activeEngagementEstimateDesc = prometheus.NewDesc("relay_engagement_weekly_estimated", "Estimated consenting app identities by Berlin ISO week and engagement kind; reciprocal is the chat/call union. Coverage is incomplete.", []string{"week", "kind"}, nil)
 	featureUseReadyDesc          = prometheus.NewDesc("relay_feature_use_storage_ready", "Whether durable consented weekly feature use estimates are available.", nil, nil)
@@ -37,6 +38,7 @@ var (
 func (s *InboxStore) Describe(ch chan<- *prometheus.Desc) {
 	ch <- activeIdentityReadyDesc
 	ch <- activeIdentityEstimateDesc
+	ch <- activeIdentityCoverageDesc
 	ch <- activeEngagementReadyDesc
 	ch <- activeEngagementEstimateDesc
 	ch <- featureUseReadyDesc
@@ -90,6 +92,11 @@ func (s *InboxStore) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(activeIdentityReadyDesc, prometheus.GaugeValue, dailyFlag)
 	ch <- prometheus.MustNewConstMetric(activeEngagementReadyDesc, prometheus.GaugeValue, weeklyFlag)
 	for _, value := range daily {
+		partial := 0.
+		if value.Partial {
+			partial = 1
+		}
+		ch <- prometheus.MustNewConstMetric(activeIdentityCoverageDesc, prometheus.GaugeValue, partial, value.Day)
 		for i, window := range []string{"1d", "7d", "30d"} {
 			counts := [3]uint64{value.Counts.Day, value.Counts.Week, value.Counts.Month}
 			ch <- prometheus.MustNewConstMetric(activeIdentityEstimateDesc, prometheus.GaugeValue, float64(counts[i]), window, value.Day)

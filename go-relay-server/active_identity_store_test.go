@@ -404,7 +404,7 @@ func TestB29StoreKeeps31RawDaysAnd7ImmutableFinalizedTriples(t *testing.T) {
 	}
 }
 
-func TestB29StorePartialStartupIsAbsentAndMeasuredEmptyDayIsZero(t *testing.T) {
+func TestB29StorePartialStartupAndMeasuredEmptyDayHaveDistinctCoverage(t *testing.T) {
 	start := b29StoreMidnight(t, "2026-03-28")
 	clock := &b29StoreClock{at: start.Add(12 * time.Hour)}
 	store := b29NewStore(t, clock)
@@ -413,24 +413,25 @@ func TestB29StorePartialStartupIsAbsentAndMeasuredEmptyDayIsZero(t *testing.T) {
 	}
 	b29StoreAdmit(t, store, "2026-03-28", "public-partial-day-account")
 	b29StoreAdvance(t, store, clock, start.AddDate(0, 0, 1))
-	if got := b29StoreFinals(t, store); len(got) != 0 {
-		t.Fatalf("first partial day masqueraded as fully observed: %v", got)
+	partial := b29StoreFindFinal(t, b29StoreFinals(t, store), "2026-03-28")
+	if !partial.Partial || partial.Counts != (activeIdentityEstimate{Day: 1, Week: 1, Month: 1}) {
+		t.Fatalf("first partial day did not retain its observed marks and coverage: %+v", partial)
 	}
 	// March29 is a genuine observed empty Berlin day, despite being23 hours.
 	b29StoreAdvance(t, store, clock, start.AddDate(0, 0, 2))
 	got := b29StoreFinals(t, store)
-	if len(got) != 1 || got[0].Day != "2026-03-29" || got[0].Counts != (activeIdentityEstimate{Day: 0, Week: 1, Month: 1}) {
+	if len(got) != 2 || got[1].Day != "2026-03-29" || got[1].Partial || got[1].Counts != (activeIdentityEstimate{Day: 0, Week: 1, Month: 1}) {
 		t.Fatalf("measured empty day/incomplete rolling coverage=%+v", got)
 	}
 	zeroClock := &b29StoreClock{at: start}
 	zero := b29NewStore(t, zeroClock)
 	b29StoreAdvance(t, zero, zeroClock, start.AddDate(0, 0, 1))
-	if got := b29StoreFinals(t, zero); len(got) != 1 || got[0].Counts != (activeIdentityEstimate{}) {
+	if got := b29StoreFinals(t, zero); len(got) != 1 || got[0].Partial || got[0].Counts != (activeIdentityEstimate{}) {
 		t.Fatalf("genuinely measured all-empty day was not a zero: %+v", got)
 	}
 }
 
-func TestB29StoreRestartAndDowntimeDoNotInventDays(t *testing.T) {
+func TestB29StoreRestartAndDowntimeRetainPartialDays(t *testing.T) {
 	start := b29StoreMidnight(t, "2026-10-20")
 	clock := &b29StoreClock{at: start}
 	store := b29NewStore(t, clock)
@@ -447,25 +448,98 @@ func TestB29StoreRestartAndDowntimeDoNotInventDays(t *testing.T) {
 	}
 	b29StoreAdmit(t, restarted, "2026-10-21", "public-restarted-partial-account")
 	b29StoreAdvance(t, restarted, clock, start.AddDate(0, 0, 2))
-	if got := b29StoreFinalMap(t, b29StoreFinals(t, restarted)); !reflect.DeepEqual(got, prior) {
-		t.Fatalf("restart's partial open day was finalized: %v", got)
+	if got := b29StoreFindFinal(t, b29StoreFinals(t, restarted), "2026-10-21"); !got.Partial ||
+		got.Counts != (activeIdentityEstimate{Day: 1, Week: 2, Month: 2}) {
+		t.Fatalf("restart's partial open day lost its observed marks: %+v", got)
 	}
 	clock.set(start.AddDate(0, 0, 5).Add(12 * time.Hour))
 	afterGap, err := newActiveIdentityStore(store.path, b29StoreKey(), clock.now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := b29StoreFinalMap(t, b29StoreFinals(t, afterGap)); !reflect.DeepEqual(got, prior) {
-		t.Fatalf("downtime invented missing-date zeros: %v", got)
+	finals := b29StoreFinals(t, afterGap)
+	if len(finals) != 5 || finals[0].Partial || finals[0].Counts != prior["2026-10-20"] {
+		t.Fatalf("restart did not retain the frozen full day and four partial days: %+v", finals)
+	}
+	for _, day := range []string{"2026-10-22", "2026-10-23", "2026-10-24"} {
+		if got := b29StoreFindFinal(t, finals, day); !got.Partial ||
+			got.Counts != (activeIdentityEstimate{Day: 0, Week: 2, Month: 2}) {
+			t.Fatalf("downtime day missing its observed lower bound: %+v", got)
+		}
 	}
 	b29StoreAdvance(t, afterGap, clock, start.AddDate(0, 0, 6))
-	if got := b29StoreFinalMap(t, b29StoreFinals(t, afterGap)); !reflect.DeepEqual(got, prior) {
-		t.Fatalf("post-gap partial day was finalized: %v", got)
+	if got := b29StoreFindFinal(t, b29StoreFinals(t, afterGap), "2026-10-25"); !got.Partial {
+		t.Fatalf("post-gap partial day was marked fully observed: %+v", got)
 	}
 	b29StoreAdvance(t, afterGap, clock, start.AddDate(0, 0, 7))
-	got := b29StoreFinalMap(t, b29StoreFinals(t, afterGap))
-	if len(got) != 2 || got["2026-10-26"].Day != 0 {
-		t.Fatalf("first fully observed day after gap missing: %v", got)
+	if got := b29StoreFindFinal(t, b29StoreFinals(t, afterGap), "2026-10-26"); got.Partial || got.Counts.Day != 0 {
+		t.Fatalf("first fully observed empty day after gap missing: %+v", got)
+	}
+}
+
+func TestB29StoreShortRestartPreservesFullDayWithRecentCheckpoint(t *testing.T) {
+	const day = "2026-03-29"
+	start := b29StoreMidnight(t, day)
+	closeDay := b29StoreMidnight(t, "2026-03-30")
+	for _, stop := range []time.Time{start.Add(12 * time.Hour), closeDay.Add(-time.Second)} {
+		t.Run(stop.Format(time.RFC3339), func(t *testing.T) {
+			clock := &b29StoreClock{at: start}
+			store := b29NewStore(t, clock)
+			b29StoreAdmit(t, store, day, "public-before-checkpoint")
+
+			before := b29StoreDisk(t, store.path)
+			b29StoreAdvance(t, store, clock, stop)
+			if idle := b29StoreDisk(t, store.path); idle.Generation != before.Generation {
+				t.Fatal("idle same-day tick wrote a new snapshot")
+			}
+			if err := store.advanceAndSave(true); err != nil {
+				t.Fatal(err)
+			}
+			clock.set(stop.Add(2 * time.Second))
+			restarted, err := newActiveIdentityStore(store.path, b29StoreKey(), clock.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if clock.now().Before(closeDay) {
+				b29StoreAdvance(t, restarted, clock, closeDay)
+			}
+			got := b29StoreFindFinal(t, b29StoreFinals(t, restarted), day)
+			if got.Partial || got.Counts != (activeIdentityEstimate{Day: 1, Week: 1, Month: 1}) {
+				t.Fatalf("short restart lost full-day eligibility or observed marks: %+v", got)
+			}
+		})
+	}
+}
+
+func TestB29StoreRestoresLegacySnapshotAndFillsRetainedMissingDay(t *testing.T) {
+	start := b29StoreMidnight(t, "2026-10-20")
+	clock := &b29StoreClock{at: start}
+	store := b29NewStore(t, clock)
+	b29StoreAdmit(t, store, "2026-10-20", "public-before-upgrade")
+	b29StoreAdvance(t, store, clock, start.AddDate(0, 0, 1))
+	b29StoreAdvance(t, store, clock, start.AddDate(0, 0, 2))
+	legacy := b29StoreDisk(t, store.path)
+	legacy.ObservedAt = nil
+	legacy.Finalized = legacy.Finalized[:1]
+	b29StorePutBytes(t, store.path, b29StoreDiskBytes(t, legacy))
+
+	restarted, err := newActiveIdentityStore(store.path, b29StoreKey(), clock.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []activeIdentityFinalized{
+		legacy.Finalized[0],
+		{Day: "2026-10-21", Counts: activeIdentityEstimate{Day: 0, Week: 1, Month: 1}, Partial: true},
+	}
+	if got := b29StoreFinals(t, restarted); !reflect.DeepEqual(got, want) {
+		t.Fatalf("migration produced wrong retained days: got %+v want %+v", got, want)
+	}
+	restarted, err = newActiveIdentityStore(store.path, b29StoreKey(), clock.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b29StoreFinals(t, restarted); !reflect.DeepEqual(got, want) {
+		t.Fatalf("restart lost persisted coverage: got %+v want %+v", got, want)
 	}
 }
 

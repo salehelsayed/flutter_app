@@ -348,6 +348,11 @@ func main() {
 	sig := <-sigCh
 
 	log.Printf("Shutting down (%s)...", sig)
+	if inbox.activeIdentities != nil {
+		if err := inbox.activeIdentities.advanceAndSave(true); err != nil {
+			log.Print("[ACTIVE] Final coverage checkpoint unavailable")
+		}
+	}
 	cancel()
 	sub.Close()
 	store.StopCleanup()
@@ -413,7 +418,7 @@ func logPeerConnected(p peer.ID, inbox *InboxStore, total int64) {
 }
 
 func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, groupInbox *GroupInboxStore, rz *RendezvousStore, media *MediaStore, profile *ProfileStore, push *PushService) {
-	ticker := time.NewTicker(60 * time.Second)
+	ticker := time.NewTicker(activeIdentityObservationPeriod)
 	defer ticker.Stop()
 	for {
 		select {
