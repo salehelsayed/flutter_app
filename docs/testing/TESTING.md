@@ -5422,6 +5422,13 @@ preflight before any build, preparation or device action. Unknown routes or
 changed owners block that route; independent known routes remain runnable.
 This is not universal assertion-level deduplication of nested legacy composites.
 
+The full legacy dependency step uses `flutter pub get --offline --enforce-lockfile`
+in both direct and protected runs. Plain `flutter pub get` rewrote the
+`background_downloader` classification in `pubspec.lock`. On AX42, the
+contract caught the missing flag in both routes at `021d7469` and passed at
+`06d012884`. A warm-cache run of the enforced command exited 0 and preserved
+the lockfile SHA-256 (Claude-UI mailbox report `m-ece58f5c`).
+
 Additional adapters execute inside `mknoon_checks.py`'s existing scheduler and
 leases. `--plan` records each concrete command template, target role and required
 configuration key. Runtime values belong under `full_suite` in `--device-config`;
