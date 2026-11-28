@@ -175,6 +175,52 @@ func TestB29RuntimeCollectorDurableCalendarAndKinds(t *testing.T) {
 	}
 }
 
+func TestB29RuntimeCollectorFinalizesSignedMarksAfterRestart(t *testing.T) {
+	const day = "2026-03-29"
+	start := b29StoreMidnight(t, day)
+	closeDay := b29StoreMidnight(t, "2026-03-30")
+	for _, test := range []struct {
+		name      string
+		restartAt time.Time
+	}{
+		{"same-day", start.Add(12 * time.Hour)},
+		{"across-midnight", closeDay.Add(2 * time.Minute)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			clock := &b29StoreClock{at: start}
+			store := b29NewStore(t, clock)
+			key, account := b293Account(t, 41)
+			otherKey, otherAccount := b293Account(t, 44)
+			_, firstTransport := b293Account(t, 42)
+			_, secondTransport := b293Account(t, 43)
+			firstMark := b293Raw(t, b293Request(t, key, day, account, firstTransport))
+			linkedMark := b293Raw(t, b293Request(t, key, day, account, secondTransport))
+			otherMark := b293Raw(t, b293Request(t, otherKey, day, otherAccount, firstTransport))
+			b293Ack(t, activeIdentityResponse(firstMark, firstTransport, store))
+			b293Ack(t, activeIdentityResponse(linkedMark, secondTransport, store))
+			b293Ack(t, activeIdentityResponse(otherMark, firstTransport, store))
+
+			clock.set(test.restartAt)
+			reopened, err := newActiveIdentityStore(store.path, b29StoreKey(), clock.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inbox := NewInboxStore(nil)
+			inbox.activeIdentities = reopened
+			if test.restartAt.Before(closeDay) {
+				b29RuntimeNoEstimates(t, b29RuntimeScrape(t, inbox))
+				b293Ack(t, activeIdentityResponse(firstMark, firstTransport, reopened))
+				b29StoreAdvance(t, reopened, clock, closeDay)
+			}
+
+			body := b29RuntimeScrape(t, inbox)
+			for _, window := range []string{"1d", "7d", "30d"} {
+				b29RuntimeContains(t, body, fmt.Sprintf("relay_active_identities_estimated{day=%q,window=%q} 2", day, window))
+			}
+		})
+	}
+}
+
 func TestB29RuntimeCollectorFailedWriteWithholdsAllRows(t *testing.T) {
 	clock := &b29StoreClock{at: b29StoreMidnight(t, "2026-10-24")}
 	store := b29EngagementStore(t, clock)
